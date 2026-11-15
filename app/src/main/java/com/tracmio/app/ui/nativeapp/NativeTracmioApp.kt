@@ -385,6 +385,13 @@ fun NativeTracmioApp(
                                 hostCallbacks = hostCallbacks,
                                 onBack = { navigateBack() }
                             )
+                            "settings" -> SettingsHubScreen(
+                                settings = settings,
+                                palette = palette,
+                                viewModel = viewModel,
+                                onBack = { navigateBack() },
+                                onNavigate = { navigateTo(it) }
+                            )
                             "themes" -> ThemesStudioScreen(
                                 settings = settings,
                                 palette = palette,
