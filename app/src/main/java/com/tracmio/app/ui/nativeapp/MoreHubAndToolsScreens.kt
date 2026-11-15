@@ -68,7 +68,8 @@ fun MoreScreen(
         ToolCatalogItem("budgets", "budgets", "📊", "Planning & Budgets", "Budgets, Runway & Goals", palette.primary),
         ToolCatalogItem("people", "people", "👥", "People & Khata", "Smart Split & Balances", Color(0xFFA855F7)),
         ToolCatalogItem("cash_counter", "cash_counter", "💵", "3-Step Cash Counter", "Notes & Coins Reconcile", Color(0xFF34D399)),
-        ToolCatalogItem("guide", "guide", "📘", "App Guide & Manual", "Quick-jump help directory", Color(0xFF38BDF8))
+        ToolCatalogItem("guide", "guide", "📘", "App Guide & Manual", "Quick-jump help directory", Color(0xFF38BDF8)),
+        ToolCatalogItem("settings", "settings", "⚙️", "Settings & Profile", "Personal details, preferences & app controls", Color(0xFF38BDF8))
     )
 
     LazyColumn(
