@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.GridView
@@ -51,7 +52,7 @@ fun NativeTracmioApp(
 
     val backStack = remember { mutableStateListOf("dashboard") }
     val currentRoute = backStack.lastOrNull() ?: "dashboard"
-    val topTabs = remember { setOf("dashboard", "accounts", "transactions", "more") }
+    val topTabs = remember { setOf("dashboard", "accounts", "transactions", "reports", "more") }
 
     fun navigateTo(route: String) {
         if (route in topTabs) {
@@ -618,9 +619,10 @@ private fun FloatingGlassBottomNav(
     )
     val rightTabs = listOf(
         Triple("transactions", "Transactions", Icons.AutoMirrored.Filled.ReceiptLong),
+        Triple("reports", "Reports", Icons.Default.Assessment),
         Triple("more", "More", Icons.Default.GridView)
     )
-    val coreTabRoutes = remember { setOf("dashboard", "accounts", "transactions") }
+    val coreTabRoutes = remember { setOf("dashboard", "accounts", "transactions", "reports") }
 
     Row(
         modifier = Modifier
