@@ -5,11 +5,22 @@ import java.math.RoundingMode
 
 object MoneyPaise {
     fun toPaise(rupees: Double): Long {
-        return (BigDecimal.valueOf(rupees).multiply(BigDecimal(100))).setScale(0, RoundingMode.HALF_UP).toLong()
+        if (!rupees.isFinite()) return 0L
+        return BigDecimal.valueOf(rupees)
+            .multiply(BigDecimal(100))
+            .setScale(0, RoundingMode.HALF_UP)
+            .toLong()
     }
 
     fun toRupees(paise: Long): Double {
-        return BigDecimal.valueOf(paise).divide(BigDecimal(100), 2, RoundingMode.HALF_UP).toDouble()
+        return BigDecimal.valueOf(paise)
+            .divide(BigDecimal(100), 2, RoundingMode.HALF_UP)
+            .toDouble()
+    }
+
+    fun roundRupees(rupees: Double): Double {
+        if (!rupees.isFinite()) return 0.0
+        return toRupees(toPaise(rupees))
     }
 
     fun fromPaise(paise: Long): Double = toRupees(paise)
@@ -21,11 +32,12 @@ object MoneyPaise {
 
     fun formatCurrency(amount: Double, symbol: String = "₹", stealthMode: Boolean = false, privacyMask: Boolean = false): String {
         if (privacyMask) return "$symbol••••••"
+        val safeAmount = if (amount.isFinite()) amount else 0.0
         val effective = if (stealthMode) {
-            val hash = kotlin.math.abs(amount.hashCode() % 155) + 25
+            val hash = kotlin.math.abs(safeAmount.hashCode() % 155) + 25
             hash.toDouble()
         } else {
-            amount
+            safeAmount
         }
         return if (effective % 1.0 == 0.0) {
             "$symbol%,.0f".format(effective)
@@ -36,7 +48,7 @@ object MoneyPaise {
 
     fun parsePaise(raw: String): Long {
         val cleaned = raw.replace(Regex("[^0-9.-]"), "").trim()
-        val num = cleaned.toDoubleOrNull() ?: 0.0
+        val num = cleaned.toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0
         return toPaise(num)
     }
 }

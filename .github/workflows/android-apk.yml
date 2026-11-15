@@ -33,10 +33,10 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | sdkmanager --licenses || true
 
-      - name: Run unit tests & build debug APK
+      - name: Run tests, lint, debug APK & release compile check
         run: |
           chmod +x ./gradlew
-          ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleDebug
+          ./gradlew --no-daemon --stacktrace testDebugUnitTest lintDebug assembleDebug compileReleaseKotlin
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

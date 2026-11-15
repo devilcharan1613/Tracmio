@@ -46,24 +46,48 @@ class NativeHostCallbacksImpl(
     private val onRequestPermission: (permission: String, onResult: (Boolean) -> Unit) -> Unit
 ) : NativeHostCallbacks {
 
-    private fun saveUriImageLocally(uri: Uri, folderName: String, fileName: String): Triple<String, String, Long> {
+    private fun saveUriImageLocally(uri: Uri, folderName: String, fileName: String): Triple<String, String, Long>? {
         val dir = File(activity.filesDir, folderName).apply { mkdirs() }
         val outFile = File(dir, fileName)
-        activity.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(outFile).use { output ->
-                input.copyTo(output)
-            }
+        val copied = runCatching {
+            var totalBytes = 0L
+            activity.contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(outFile).use { output ->
+                    val buf = ByteArray(8192)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        totalBytes += n
+                        if (totalBytes > MAX_IMAGE_IMPORT_BYTES) {
+                            throw IllegalArgumentException("Image exceeds 10 MB limit")
+                        }
+                        output.write(buf, 0, n)
+                    }
+                    output.flush()
+                }
+            } ?: throw IllegalStateException("Cannot open selected image stream")
+            totalBytes
+        }.getOrElse {
+            runCatching { outFile.delete() }
+            return null
         }
-        val mime = activity.contentResolver.getType(uri) ?: "image/jpeg"
+        if (copied <= 0L) {
+            runCatching { outFile.delete() }
+            return null
+        }
         return Triple(outFile.name, outFile.absolutePath, outFile.length())
     }
 
     override fun chooseWallpaperImage() {
         onLaunchPickVisualMedia { uri ->
             activity.lifecycleScope.launch(Dispatchers.IO) {
-                val (_, path, _) = saveUriImageLocally(uri, "wallpapers", "custom_wallpaper.jpg")
-                viewModel.updateSettings { it.copy(customWallpaperPath = path) }
-                viewModel.postStatus("Custom Liquid Glass wallpaper applied")
+                val saved = saveUriImageLocally(uri, "wallpapers", "custom_wallpaper.jpg")
+                if (saved != null) {
+                    viewModel.updateSettings { it.copy(customWallpaperPath = saved.second) }
+                    viewModel.postStatus("Custom Liquid Glass wallpaper applied")
+                } else {
+                    viewModel.postStatus("Failed to read selected wallpaper image")
+                }
             }
         }
     }
@@ -74,7 +98,7 @@ class NativeHostCallbacksImpl(
             val photoFile = File(dir, "custom_wallpaper_cam.jpg")
             val photoUri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", photoFile)
             onLaunchTakePicture(photoUri) { ok ->
-                if (ok) {
+                if (ok && photoFile.exists() && photoFile.length() > 0L) {
                     viewModel.updateSettings { it.copy(customWallpaperPath = photoFile.absolutePath) }
                     viewModel.postStatus("Captured wallpaper applied")
                 }
@@ -93,8 +117,12 @@ class NativeHostCallbacksImpl(
         onLaunchPickVisualMedia { uri ->
             activity.lifecycleScope.launch(Dispatchers.IO) {
                 val ts = System.currentTimeMillis()
-                val (name, path, size) = saveUriImageLocally(uri, "tracker_attachments", "att_$ts.jpg")
-                onPicked(name, "image/jpeg", path, size)
+                val saved = saveUriImageLocally(uri, "tracker_attachments", "att_$ts.jpg")
+                if (saved != null) {
+                    onPicked(saved.first, "image/jpeg", saved.second, saved.third)
+                } else {
+                    viewModel.postStatus("Unable to attach selected image")
+                }
             }
         }
     }
@@ -105,7 +133,7 @@ class NativeHostCallbacksImpl(
             val photoFile = File(dir, "receipt_${System.currentTimeMillis()}.jpg")
             val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", photoFile)
             onLaunchTakePicture(uri) { ok ->
-                if (ok) {
+                if (ok && photoFile.exists() && photoFile.length() > 0L) {
                     onCaptured(photoFile.name, "image/jpeg", photoFile.absolutePath, photoFile.length())
                 }
             }
@@ -124,9 +152,14 @@ class NativeHostCallbacksImpl(
         onLaunchCreateDoc("application/json", fileName) { uri ->
             activity.lifecycleScope.launch(Dispatchers.IO) {
                 runCatching {
-                    activity.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                    val bytes = json.toByteArray(Charsets.UTF_8)
+                    check(bytes.isNotEmpty()) { "Backup payload is empty" }
+                    activity.contentResolver.openOutputStream(uri)?.use {
+                        it.write(bytes)
+                        it.flush()
+                    } ?: throw IllegalStateException("Cannot open output destination")
                 }.onSuccess {
-                    viewModel.postStatus("Exported plain JSON backup")
+                    viewModel.postStatus("Exported Backup v2 JSON")
                 }.onFailure {
                     viewModel.postStatus("Export failed: ${it.localizedMessage}")
                 }
@@ -140,11 +173,18 @@ class NativeHostCallbacksImpl(
             activity.lifecycleScope.launch(Dispatchers.IO) {
                 runCatching {
                     val encrypted = TracmioSecurityEngine.encryptBackup(plain, password)
-                    activity.contentResolver.openOutputStream(uri)?.use { it.write(encrypted.toByteArray(Charsets.UTF_8)) }
+                    val bytes = encrypted.toByteArray(Charsets.UTF_8)
+                    check(bytes.isNotEmpty()) { "Encrypted backup payload is empty" }
+                    activity.contentResolver.openOutputStream(uri)?.use {
+                        it.write(bytes)
+                        it.flush()
+                    } ?: throw IllegalStateException("Cannot open output destination")
                 }.onSuccess {
                     viewModel.postStatus("Exported AES-256-GCM encrypted backup")
                 }.onFailure {
                     viewModel.postStatus("Encrypted export failed: ${it.localizedMessage}")
+                }.also {
+                    password.fill('\u0000')
                 }
             }
         }
@@ -157,10 +197,34 @@ class NativeHostCallbacksImpl(
                     activity.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
                 }.getOrNull()
                 if (!text.isNullOrBlank()) {
-                    viewModel.importBackupJsonText(text, decryptPassword)
+                    viewModel.prepareBackupPreview(text, decryptPassword)
                 } else {
-                    viewModel.postStatus("Selected backup file is empty")
+                    viewModel.postStatus("Selected backup file is empty or unreadable")
                 }
+                decryptPassword?.fill('\u0000')
+            }
+        }
+    }
+
+    override fun importLegacyJsonBackup() {
+        onLaunchOpenDoc(arrayOf("application/json", "*/*")) { uri ->
+            activity.lifecycleScope.launch(Dispatchers.IO) {
+                val text = runCatching {
+                    activity.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }.getOrNull()
+                if (!text.isNullOrBlank()) {
+                    viewModel.importLegacyJsonText(text)
+                } else {
+                    viewModel.postStatus("Selected legacy JSON file is empty")
+                }
+            }
+        }
+    }
+
+    override fun importLegacyDatabaseFile() {
+        onLaunchOpenDoc(arrayOf("application/octet-stream", "*/*")) { uri ->
+            activity.lifecycleScope.launch(Dispatchers.IO) {
+                viewModel.importLegacyDatabaseUri(uri)
             }
         }
     }
@@ -171,7 +235,11 @@ class NativeHostCallbacksImpl(
             activity.lifecycleScope.launch(Dispatchers.IO) {
                 runCatching {
                     val bytes = XlsxExporter.createWorkbookBytes(st.accounts, st.transactions)
-                    activity.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    check(bytes.isNotEmpty()) { "Workbook output is empty" }
+                    activity.contentResolver.openOutputStream(uri)?.use {
+                        it.write(bytes)
+                        it.flush()
+                    } ?: throw IllegalStateException("Cannot open output destination")
                 }.onSuccess {
                     viewModel.postStatus("Exported Excel (.xlsx) workbook")
                 }.onFailure {
@@ -187,11 +255,16 @@ class NativeHostCallbacksImpl(
             activity.lifecycleScope.launch(Dispatchers.IO) {
                 runCatching {
                     val csv = CsvParser.exportTransactionsToCsv(st.transactions)
-                    activity.contentResolver.openOutputStream(uri)?.use { it.write(csv.toByteArray(Charsets.UTF_8)) }
+                    val bytes = csv.toByteArray(Charsets.UTF_8)
+                    check(bytes.isNotEmpty()) { "CSV output is empty" }
+                    activity.contentResolver.openOutputStream(uri)?.use {
+                        it.write(bytes)
+                        it.flush()
+                    } ?: throw IllegalStateException("Cannot open output destination")
                 }.onSuccess {
                     viewModel.postStatus("Exported CSV ledger")
                 }.onFailure {
-                    viewModel.postStatus("CSV export failed")
+                    viewModel.postStatus("CSV export failed: ${it.localizedMessage}")
                 }
             }
         }
@@ -214,25 +287,22 @@ class NativeHostCallbacksImpl(
 
     override fun printReceipt(tx: TransactionEntity, accountName: String) {
         val curr = viewModel.settingsFlow.value.currencySymbol
-        val acc = AccountEntity(id = tx.accountId, name = accountName, accountType = tx.paymentMethod)
-        val bytes = NativeStatementPdf.buildStatementPdfBytes(listOf(acc), listOf(tx), curr)
-        dispatchPdfPrint("Tracmio Receipt #${tx.id}", bytes)
+        val result = NativeStatementPdf.buildReceiptPdfResult(tx, accountName, curr)
+        dispatchPdfPrint("Tracmio Receipt #${tx.id}", result)
     }
 
     override fun printStatement(accounts: List<AccountEntity>, transactions: List<TransactionEntity>) {
         val curr = viewModel.settingsFlow.value.currencySymbol
-        val bytes = NativeStatementPdf.buildStatementPdfBytes(accounts, transactions, curr)
-        dispatchPdfPrint("Tracmio Ledger Statement", bytes)
+        val result = NativeStatementPdf.buildStatementPdfResult(accounts, transactions, curr)
+        dispatchPdfPrint("Tracmio Ledger Statement", result)
     }
 
     override fun printCustomReport(jobName: String, title: String, lines: List<Pair<String, Boolean>>) {
-        val st = viewModel.uiState.value
-        val curr = viewModel.settingsFlow.value.currencySymbol
-        val bytes = NativeStatementPdf.buildStatementPdfBytes(st.accounts, st.transactions, curr)
-        dispatchPdfPrint(jobName, bytes)
+        val result = NativeStatementPdf.buildCustomReportPdfResult(title, lines)
+        dispatchPdfPrint(jobName, result)
     }
 
-    private fun dispatchPdfPrint(jobName: String, pdfBytes: ByteArray) {
+    private fun dispatchPdfPrint(jobName: String, pdfResult: NativeStatementPdf.PdfRenderResult) {
         val pm = activity.getSystemService(Context.PRINT_SERVICE) as? PrintManager ?: return
         val adapter = object : PrintDocumentAdapter() {
             override fun onLayout(
@@ -248,7 +318,7 @@ class NativeHostCallbacksImpl(
                 }
                 val info = PrintDocumentInfo.Builder("$jobName.pdf")
                     .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
-                    .setPageCount(1)
+                    .setPageCount(pdfResult.pageCount.coerceAtLeast(1))
                     .build()
                 callback.onLayoutFinished(info, true)
             }
@@ -259,9 +329,14 @@ class NativeHostCallbacksImpl(
                 cancellationSignal: CancellationSignal?,
                 callback: WriteResultCallback
             ) {
+                if (cancellationSignal?.isCanceled == true) {
+                    callback.onWriteCancelled()
+                    return
+                }
                 runCatching {
                     FileOutputStream(destination.fileDescriptor).use { out ->
-                        out.write(pdfBytes)
+                        out.write(pdfResult.bytes)
+                        out.flush()
                     }
                 }.onSuccess {
                     callback.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
@@ -366,5 +441,9 @@ class NativeHostCallbacksImpl(
 
     override fun scheduleMonthlyBackupReminder(enabled: Boolean, dayOfMonth: Int, hour: Int, minute: Int) {
         TracmioReminderScheduler.scheduleMonthlyBackupReminder(activity, enabled, dayOfMonth, hour, minute)
+    }
+
+    companion object {
+        private const val MAX_IMAGE_IMPORT_BYTES = 10L * 1024L * 1024L
     }
 }

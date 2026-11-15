@@ -21,10 +21,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tracmio.app.data.MoneyPaise
 import com.tracmio.app.data.NativeTracmioUiState
+import com.tracmio.app.data.repository.FinanceRepository
 import com.tracmio.app.data.security.DeviceSecurityCapability
 import com.tracmio.app.data.security.TracmioSecurityEngine
+import kotlinx.coroutines.delay
 
 @Composable
 fun PendingRefundsScreen(
@@ -548,6 +551,8 @@ fun DataAndExportScreen(
     var showEncryptDialog by remember { mutableStateOf(false) }
     var showDecryptDialog by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
+    val pendingPreview by viewModel.pendingBackupPreview.collectAsStateWithLifecycle()
+    val lastRestoreReport by viewModel.lastRestoreReport.collectAsStateWithLifecycle()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("data_export_screen"),
@@ -563,10 +568,23 @@ fun DataAndExportScreen(
             }
         }
 
+        lastRestoreReport?.let { rep ->
+            item {
+                LiquidGlassComponents(settings = settings, palette = palette) {
+                    Text("✅ Last Restore Summary (${rep.mode.name})", fontWeight = FontWeight.ExtraBold, color = Color(0xFF34D399))
+                    Text(
+                        "Inserted: ${rep.insertedCount} · Skipped Duplicates: ${rep.skippedDuplicatesCount} · Rejected: ${rep.rejectedCount} · Attachments: ${rep.attachmentsRestoredCount}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = palette.textPrimary
+                    )
+                }
+            }
+        }
+
         item {
             LiquidGlassComponents(settings = settings, palette = palette) {
                 Text("💾 Full JSON Backup & Restore", fontWeight = FontWeight.ExtraBold, color = palette.primary)
-                Text("Includes accounts, allocations, transactions, goals, loans, trackers, and Liquid Glass preferences.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                Text("Includes accounts, allocations, transactions, goals, loans, trackers, attachments, and Liquid Glass preferences.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
                 Button(
                     onClick = { hostCallbacks.exportPlainJsonBackup("tracmio_backup_16.13.json") },
                     colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
@@ -596,6 +614,31 @@ fun DataAndExportScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("Import Encrypted", color = palette.primary, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        item {
+            LiquidGlassComponents(settings = settings, palette = palette) {
+                Text("🧳 Legacy Migration Wizard (Tracmio / FinTrack)", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                Text(
+                    "Safely import older JSON snapshots or unencrypted legacy SQLite (.db) backups using Safe Merge deduplication.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.textSecondary
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { hostCallbacks.importLegacyJsonBackup() },
+                        modifier = Modifier.weight(1f).testTag("legacy_json_import_button")
+                    ) {
+                        Text("Legacy JSON", color = palette.textPrimary, fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { hostCallbacks.importLegacyDatabaseFile() },
+                        modifier = Modifier.weight(1f).testTag("legacy_db_import_button")
+                    ) {
+                        Text("Legacy .DB File", color = palette.primary, fontSize = 12.sp)
                     }
                 }
             }
@@ -656,13 +699,14 @@ fun DataAndExportScreen(
                     onClick = {
                         if (password.isNotBlank()) {
                             hostCallbacks.exportEncryptedJsonBackup("tracmio_encrypted_16.13.tracmio.json", password.toCharArray())
+                            password = ""
                             showEncryptDialog = false
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
                 ) { Text("Export Encrypted", color = palette.background, fontWeight = FontWeight.Bold) }
             },
-            dismissButton = { TextButton(onClick = { showEncryptDialog = false }) { Text("Cancel", color = palette.textSecondary) } }
+            dismissButton = { TextButton(onClick = { password = ""; showEncryptDialog = false }) { Text("Cancel", color = palette.textSecondary) } }
         )
     }
 
@@ -686,13 +730,108 @@ fun DataAndExportScreen(
                     onClick = {
                         if (password.isNotBlank()) {
                             hostCallbacks.importJsonBackup(password.toCharArray())
+                            password = ""
                             showDecryptDialog = false
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
                 ) { Text("Choose File", color = palette.background, fontWeight = FontWeight.Bold) }
             },
-            dismissButton = { TextButton(onClick = { showDecryptDialog = false }) { Text("Cancel", color = palette.textSecondary) } }
+            dismissButton = { TextButton(onClick = { password = ""; showDecryptDialog = false }) { Text("Cancel", color = palette.textSecondary) } }
+        )
+    }
+
+    pendingPreview?.let { preview ->
+        var restoreMode by remember(preview) { mutableStateOf(FinanceRepository.BackupRestoreMode.SAFE_MERGE) }
+        val rep = preview.report
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissBackupPreview() },
+            containerColor = palette.surfaceElevated,
+            title = {
+                Text(
+                    "📦 Confirm Backup Restore (v${rep.formatVersion})",
+                    fontWeight = FontWeight.ExtraBold,
+                    color = palette.primary
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Accounts: ${rep.accountCount} · Transactions: ${rep.transactionCount} (${rep.duplicateTransactionCount} already in vault)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = palette.textPrimary
+                    )
+                    Text(
+                        "Budgets: ${rep.budgetCount} · Goals: ${rep.goalCount} · Loans: ${rep.loanCount} · Trackers: ${rep.trackerCount} · Attachments: ${rep.attachmentCount}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.textSecondary
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(palette.surface)
+                            .clickable { restoreMode = FinanceRepository.BackupRestoreMode.SAFE_MERGE }
+                            .padding(8.dp)
+                    ) {
+                        RadioButton(
+                            selected = restoreMode == FinanceRepository.BackupRestoreMode.SAFE_MERGE,
+                            onClick = { restoreMode = FinanceRepository.BackupRestoreMode.SAFE_MERGE }
+                        )
+                        Column {
+                            Text("Safe Merge (Recommended)", fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                            Text("Keeps existing records and deduplicates by UID", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(palette.surface)
+                            .clickable { restoreMode = FinanceRepository.BackupRestoreMode.CLEAN_REPLACE }
+                            .padding(8.dp)
+                    ) {
+                        RadioButton(
+                            selected = restoreMode == FinanceRepository.BackupRestoreMode.CLEAN_REPLACE,
+                            onClick = { restoreMode = FinanceRepository.BackupRestoreMode.CLEAN_REPLACE }
+                        )
+                        Column {
+                            Text("Clean Replace", fontWeight = FontWeight.Bold, color = Color(0xFFFB7185))
+                            Text("Wipes existing local database before restoring", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                        }
+                    }
+                    if (restoreMode == FinanceRepository.BackupRestoreMode.CLEAN_REPLACE) {
+                        Text(
+                            "⚠️ Warning: Clean Replace will permanently erase all current local vault tables before importing.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFFBBF24),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.confirmBackupRestore(restoreMode) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (restoreMode == FinanceRepository.BackupRestoreMode.CLEAN_REPLACE) Color(0xFFFB7185) else palette.primary
+                    ),
+                    modifier = Modifier.testTag("confirm_backup_restore_button")
+                ) {
+                    Text(
+                        if (restoreMode == FinanceRepository.BackupRestoreMode.CLEAN_REPLACE) "Replace Vault" else "Merge Safely",
+                        color = palette.background,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissBackupPreview() }) {
+                    Text("Cancel", color = palette.textSecondary)
+                }
+            }
         )
     }
 }
@@ -761,6 +900,20 @@ fun PrivacyAndSecurityAuditScreen(
                     )
                     Text(rep.diagnosticSummary, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
                     Text("PRAGMA integrity_check: ${rep.pragmaIntegrity}", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                    Text(
+                        "FK errors: ${rep.foreignKeyErrors} · Orphan Tx: ${rep.orphanedTransactions} · Orphan Dependents: ${rep.orphanDependentRecords} · Dup UIDs: ${rep.duplicateUidCount} · Invalid Amts: ${rep.invalidAmountCount}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.textSecondary
+                    )
+                    if (!rep.isHealthy) {
+                        Button(
+                            onClick = { viewModel.repairDatabaseOrphans { updated -> report = updated } },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFBBF24)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Repair Orphans & Duplicate UIDs", color = Color.Black, fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
                 }
             }
         }
@@ -780,7 +933,12 @@ fun AppLockScreen(
     var useBiometrics by remember { mutableStateOf(state.appLockState.biometricEnabled) }
     var question by remember { mutableStateOf(state.appLockState.securityQuestion.ifBlank { "What was your first school's name?" }) }
     var answer by remember { mutableStateOf("") }
-    var generatedKey by remember { mutableStateOf(state.appLockState.recoveryKey) }
+    var pendingRecoveryKeyDialog by remember { mutableStateOf<String?>(null) }
+    var savedRecoveryAck by remember { mutableStateOf(false) }
+
+    var pendingSensitiveAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var reauthPin by remember { mutableStateOf("") }
+    var reauthError by remember { mutableStateOf<String?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("app_lock_settings_screen"),
@@ -793,6 +951,19 @@ fun AppLockScreen(
                     Text("← Back", color = palette.primary, fontWeight = FontWeight.ExtraBold)
                 }
                 Text("App Lock & Biometrics", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+            }
+        }
+
+        if (!state.appLockState.secureStorageAvailable) {
+            item {
+                LiquidGlassComponents(settings = settings, palette = palette) {
+                    Text(
+                        "⚠️ Android Keystore secure storage unavailable on this device/environment.",
+                        color = Color(0xFFFBBF24),
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
 
@@ -832,9 +1003,22 @@ fun AppLockScreen(
                 Button(
                     onClick = {
                         if (pin.length >= 4 && question.isNotBlank() && answer.isNotBlank()) {
-                            generatedKey = viewModel.enableAppLock(pin, useBiometrics, question, answer)
-                            pin = ""
-                            answer = ""
+                            val applyAction: () -> Unit = {
+                                val recKey = viewModel.enableAppLock(pin, useBiometrics, question, answer)
+                                if (recKey.isNotBlank()) {
+                                    pendingRecoveryKeyDialog = recKey
+                                    savedRecoveryAck = false
+                                    pin = ""
+                                    answer = ""
+                                }
+                            }
+                            if (state.appLockState.isEnabled) {
+                                reauthPin = ""
+                                reauthError = null
+                                pendingSensitiveAction = applyAction
+                            } else {
+                                applyAction()
+                            }
                         } else {
                             viewModel.postStatus("Enter a 4-6 digit PIN and security question/answer")
                         }
@@ -845,25 +1029,16 @@ fun AppLockScreen(
                     Text(if (state.appLockState.isEnabled) "Update App Lock & Recovery Key" else "Enable Liquid Glass App Lock", color = palette.background, fontWeight = FontWeight.ExtraBold)
                 }
 
-                if (generatedKey.isNotBlank()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(palette.surface).padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("Recovery Key (Save Safely):", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
-                            Text(generatedKey, fontWeight = FontWeight.ExtraBold, color = palette.primary)
-                        }
-                        TextButton(onClick = { hostCallbacks.copyToClipboard(generatedKey) }) {
-                            Text("Copy", color = palette.primary, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-
                 if (state.appLockState.isEnabled) {
                     OutlinedButton(
-                        onClick = { viewModel.disableAppLock() },
+                        onClick = {
+                            reauthPin = ""
+                            reauthError = null
+                            pendingSensitiveAction = {
+                                viewModel.disableAppLock()
+                                pendingRecoveryKeyDialog = null
+                            }
+                        },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Disable App Lock", color = Color(0xFFFB7185), fontWeight = FontWeight.Bold)
@@ -871,6 +1046,114 @@ fun AppLockScreen(
                 }
             }
         }
+    }
+
+    pendingRecoveryKeyDialog?.let { recKey ->
+        AlertDialog(
+            onDismissRequest = {},
+            containerColor = palette.surfaceElevated,
+            title = { Text("🔑 Save Your Recovery Key (Shown Once)", fontWeight = FontWeight.ExtraBold, color = palette.primary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Store this recovery key offline. For your security, Tracmio only stores an irreversible cryptographic hash and cannot display it again.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = palette.textSecondary
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(palette.surface).padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(recKey, fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                        TextButton(onClick = { hostCallbacks.copyToClipboard(recKey) }) {
+                            Text("Copy", color = palette.primary, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clickable { savedRecoveryAck = !savedRecoveryAck }
+                    ) {
+                        Checkbox(checked = savedRecoveryAck, onCheckedChange = { savedRecoveryAck = it })
+                        Text("I have saved my recovery key safely", style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { pendingRecoveryKeyDialog = null },
+                    enabled = savedRecoveryAck,
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
+                ) {
+                    Text("Done", color = palette.background, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        )
+    }
+
+    pendingSensitiveAction?.let { action ->
+        AlertDialog(
+            onDismissRequest = { pendingSensitiveAction = null },
+            containerColor = palette.surfaceElevated,
+            title = { Text("🛡️ Confirm Current PIN", fontWeight = FontWeight.ExtraBold, color = palette.textPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Verify your current App Lock PIN before modifying or disabling security.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = palette.textSecondary
+                    )
+                    OutlinedTextField(
+                        value = reauthPin,
+                        onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) reauthPin = it },
+                        label = { Text("Current PIN") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    reauthError?.let { Text(it, color = Color(0xFFFB7185), style = MaterialTheme.typography.labelSmall) }
+                    if (state.appLockState.biometricEnabled) {
+                        OutlinedButton(
+                            onClick = {
+                                hostCallbacks.authenticateBiometric(
+                                    onSuccess = {
+                                        viewModel.unlockWithBiometricSuccess()
+                                        pendingSensitiveAction = null
+                                        action()
+                                    },
+                                    onFailure = { err -> reauthError = err }
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Verify with Biometrics", color = palette.primary)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (viewModel.verifyCurrentPinForSensitiveAction(reauthPin)) {
+                            pendingSensitiveAction = null
+                            action()
+                        } else {
+                            val lockSec = viewModel.uiState.value.appLockState.lockoutRemainingSeconds
+                            reauthError = if (lockSec > 0) "Too many attempts. Locked for ${lockSec}s" else "Incorrect current PIN"
+                            reauthPin = ""
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
+                ) {
+                    Text("Verify", color = palette.background, fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingSensitiveAction = null }) {
+                    Text("Cancel", color = palette.textSecondary)
+                }
+            }
+        )
     }
 }
 
@@ -886,6 +1169,21 @@ fun AppLockOverlayScreen(
     var showRecovery by remember { mutableStateOf(false) }
     var secretInput by remember { mutableStateOf("") }
     var errorText by remember { mutableStateOf<String?>(null) }
+
+    var remainingLockoutSec by remember(state.appLockState.lockoutRemainingSeconds) {
+        mutableIntStateOf(state.appLockState.lockoutRemainingSeconds)
+    }
+    LaunchedEffect(state.appLockState.lockoutRemainingSeconds) {
+        var cur = state.appLockState.lockoutRemainingSeconds
+        remainingLockoutSec = cur
+        while (cur > 0) {
+            delay(1000L)
+            cur--
+            remainingLockoutSec = cur
+        }
+        viewModel.refreshAppLockState()
+    }
+    val isLockedOut = remainingLockoutSec > 0
 
     Box(
         modifier = Modifier
@@ -905,9 +1203,10 @@ fun AppLockOverlayScreen(
 
                 if (!showRecovery) {
                     Text(
-                        "Enter ${state.appLockState.pinLength}-digit PIN",
+                        if (isLockedOut) "Locked for ${remainingLockoutSec}s (${state.appLockState.failedAttempts} failed attempts)"
+                        else "Enter ${state.appLockState.pinLength}-digit PIN",
                         style = MaterialTheme.typography.bodySmall,
-                        color = palette.textSecondary
+                        color = if (isLockedOut) Color(0xFFFBBF24) else palette.textSecondary
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         repeat(state.appLockState.pinLength.coerceIn(4, 6)) { idx ->
@@ -937,28 +1236,40 @@ fun AppLockOverlayScreen(
                                     modifier = Modifier
                                         .size(64.dp)
                                         .clip(CircleShape)
-                                        .background(palette.surfaceElevated)
+                                        .background(if (isLockedOut) palette.surface.copy(alpha = 0.5f) else palette.surfaceElevated)
                                         .border(1.dp, palette.surfaceBorder, CircleShape)
-                                        .clickable {
+                                        .clickable(enabled = !isLockedOut) {
                                             errorText = null
                                             when (d) {
                                                 "⌫" -> if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
                                                 "✓" -> {
                                                     if (!viewModel.unlockWithPin(enteredPin)) {
-                                                        errorText = "Incorrect PIN"
+                                                        val sec = viewModel.uiState.value.appLockState.lockoutRemainingSeconds
+                                                        errorText = if (sec > 0) "Too many failed attempts. Wait ${sec}s" else "Incorrect PIN"
                                                         enteredPin = ""
                                                     }
                                                 }
                                                 else -> if (enteredPin.length < 6) {
                                                     enteredPin += d
-                                                    if (enteredPin.length == state.appLockState.pinLength && viewModel.unlockWithPin(enteredPin)) {
-                                                        enteredPin = ""
+                                                    if (enteredPin.length == state.appLockState.pinLength) {
+                                                        if (viewModel.unlockWithPin(enteredPin)) {
+                                                            enteredPin = ""
+                                                        } else {
+                                                            val sec = viewModel.uiState.value.appLockState.lockoutRemainingSeconds
+                                                            errorText = if (sec > 0) "Too many failed attempts. Wait ${sec}s" else "Incorrect PIN"
+                                                            enteredPin = ""
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                 ) {
-                                    Text(d, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+                                    Text(
+                                        d,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = if (isLockedOut) palette.textSecondary else palette.textPrimary
+                                    )
                                 }
                             }
                         }

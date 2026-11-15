@@ -318,8 +318,13 @@ private fun BudgetsAndRunwaySection(
     viewModel: NativeTracmioViewModel
 ) {
     val curr = settings.currencySymbol
-    val runwayMonths = remember(state.accounts, state.transactions) {
-        NativeLedgerCalculator.computeEmergencyRunwayMonths(state.accounts, state.transactions)
+    var runwayLookbackMonths by remember { mutableIntStateOf(3) }
+    val runway = remember(state.accounts, state.transactions, runwayLookbackMonths) {
+        NativeLedgerCalculator.computeEmergencyRunway(
+            accounts = state.accounts,
+            transactions = state.transactions,
+            lookbackMonths = runwayLookbackMonths
+        )
     }
     var catName by remember { mutableStateOf("Food & Chai") }
     var limitText by remember { mutableStateOf("") }
@@ -327,14 +332,42 @@ private fun BudgetsAndRunwaySection(
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         // Emergency Fund Runway Meter
         LiquidGlassComponents(settings = settings, palette = palette) {
-            Text("🛟 Emergency Fund Runway Meter", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = palette.primary)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("🛟 Emergency Fund Runway Meter", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(3 to "3M", 6 to "6M").forEach { (monthsOption, label) ->
+                        val selected = runwayLookbackMonths == monthsOption
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (selected) palette.primary else palette.surfaceElevated,
+                            modifier = Modifier.clickable { runwayLookbackMonths = monthsOption }
+                        ) {
+                            Text(
+                                label,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                color = if (selected) palette.background else palette.textPrimary,
+                                fontWeight = FontWeight.ExtraBold,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
+            }
             Text(
-                "${"%.1f".format(runwayMonths)} Months of Liquid Survival",
+                "${"%.1f".format(runway.months)} Months of Liquid Survival",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.ExtraBold,
                 color = palette.textPrimary
             )
-            Text("Formula: (Bank + Savings) ÷ Monthly Expense Rate (Target: 6.0+ months)", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+            Text(
+                "Liquid: $curr${"%,.0f".format(runway.liquidSavings)} ÷ ${runwayLookbackMonths}M Avg Expense: $curr${"%,.0f".format(runway.averageMonthlyExpense)}/mo (Excludes transfers & income · Target: 6.0+ mos)",
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.textSecondary
+            )
         }
 
         // Add Category Budget
@@ -621,6 +654,14 @@ private fun LoansAndPayoffSection(
                         Text("Interest: $curr${"%,.0f".format(avalanche.totalInterestPaid)}", style = MaterialTheme.typography.labelSmall, color = Color(0xFF34D399))
                     }
                 }
+            }
+            if (snowball.nonAmortizing || avalanche.nonAmortizing) {
+                Text(
+                    "⚠️ Monthly interest exceeds minimum EMI on at least one loan — increase EMI or extra payoff.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFFBBF24),
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 

@@ -47,10 +47,15 @@ data class AppLockState(
     val biometricEnabled: Boolean = false,
     val securityQuestion: String = "",
     val securityAnswerHash: String = "",
-    val recoveryKey: String = ""
+    val recoveryKey: String = "",
+    val failedAttempts: Int = 0,
+    val lockoutRemainingSeconds: Int = 0,
+    val secureStorageAvailable: Boolean = true
 )
 
 data class NativeTracmioUiState(
+    val vaultInitState: com.tracmio.app.data.security.TracmioSecurityEngine.VaultInitState =
+        com.tracmio.app.data.security.TracmioSecurityEngine.VaultInitState.Ready,
     val accounts: List<AccountEntity> = emptyList(),
     val transactions: List<TransactionEntity> = emptyList(),
     val budgets: List<BudgetEntity> = emptyList(),

@@ -2,11 +2,14 @@ package com.tracmio.app.data
 
 import com.tracmio.app.data.local.AccountEntity
 import com.tracmio.app.data.local.LoanEntity
+import com.tracmio.app.data.local.LoanPaymentEntity
 import com.tracmio.app.data.local.TransactionEntity
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Calendar
 
 class FinancialCalculatorTest {
     @Test
@@ -38,6 +41,42 @@ class FinancialCalculatorTest {
     }
 
     @Test
+    fun emergencyRunwayRollingWindowExcludesIncomeAndTransfersAndSupports3M6M() {
+        val nowCal = Calendar.getInstance().apply {
+            set(2026, Calendar.NOVEMBER, 15, 12, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val now = nowCal.timeInMillis
+        fun monthsAgo(m: Int): Long = Calendar.getInstance().apply {
+            timeInMillis = now
+            add(Calendar.MONTH, -m)
+        }.timeInMillis
+
+        val accounts = listOf(
+            AccountEntity(id = 1L, name = "Bank", accountType = "Bank", balancePaise = 6_000_000L) // ₹60,000
+        )
+        val txs = listOf(
+            // Inside 3M: total ₹12,000 across 3-month span -> ₹4,000/mo avg
+            TransactionEntity(id = 1L, accountId = 1L, type = "EXPENSE", amount = 6000.0, category = "Food & Chai", timestamp = monthsAgo(0)),
+            TransactionEntity(id = 2L, accountId = 1L, type = "EXPENSE", amount = 6000.0, category = "Food & Chai", timestamp = monthsAgo(2)),
+            // Older (4 months ago, inside 6M only): ₹24,000
+            TransactionEntity(id = 3L, accountId = 1L, type = "EXPENSE", amount = 24000.0, category = "Rent & Housing", timestamp = monthsAgo(4)),
+            // Must be excluded: INCOME, TRANSFER_OUT, BORROW
+            TransactionEntity(id = 4L, accountId = 1L, type = "INCOME", amount = 50000.0, category = "Salary", timestamp = monthsAgo(0)),
+            TransactionEntity(id = 5L, accountId = 1L, type = "TRANSFER_OUT", amount = 10000.0, category = "Transfer", timestamp = monthsAgo(0)),
+            TransactionEntity(id = 6L, accountId = 1L, type = "BORROW", amount = 5000.0, category = "Loan", timestamp = monthsAgo(0))
+        )
+        // Live bank balance = 60000 - 36000 + 50000 - 10000 + 5000 = 69000
+        val runway3m = NativeLedgerCalculator.computeEmergencyRunway(accounts, txs, lookbackMonths = 3, nowMillis = now)
+        assertEquals(4000.0, runway3m.averageMonthlyExpense, 0.01)
+
+        val runway6m = NativeLedgerCalculator.computeEmergencyRunway(accounts, txs, lookbackMonths = 6, nowMillis = now)
+        // Span from monthsAgo(4) to monthsAgo(0) is 5 months; total window expenses = 36000 -> 7200/mo
+        assertEquals(7200.0, runway6m.averageMonthlyExpense, 0.01)
+        assertTrue(runway3m.months > runway6m.months)
+    }
+
+    @Test
     fun cashDenominationAndDebtPayoffCalculatorsWork() {
         val lines = listOf(
             CashCountLine("NOTE", 500, 2),
@@ -49,19 +88,36 @@ class FinancialCalculatorTest {
         assertEquals(0.0, NativeLedgerCalculator.computeRoundUpSpareChange(100.0, 10), 0.01)
 
         val loans = listOf(
-            LoanEntity(id = 1L, name = "Card", principal = 10000.0, principalPaise = 1_000_000L, interestRate = 24.0, monthlyPayment = 1500.0),
-            LoanEntity(id = 2L, name = "Bike", principal = 20000.0, principalPaise = 2_000_000L, interestRate = 10.0, monthlyPayment = 2000.0)
+            LoanEntity(id = 1L, name = "Card", principal = 8000.0, principalPaise = 800_000L, interestRate = 24.0, monthlyPayment = 1000.0),
+            LoanEntity(id = 2L, name = "Bike", principal = 22500.0, principalPaise = 2_250_000L, interestRate = 10.0, monthlyPayment = 1000.0),
+            LoanEntity(id = 3L, name = "ClosedOld", principal = 50000.0, principalPaise = 5_000_000L, interestRate = 15.0, monthlyPayment = 2500.0, isClosed = true)
         )
-        val avalanche = NativeLedgerCalculator.simulateDebtPayoff(loans, emptyList(), 1000.0, isAvalanche = true)
-        val snowball = NativeLedgerCalculator.simulateDebtPayoff(loans, emptyList(), 1000.0, isAvalanche = false)
-        assertTrue(avalanche.totalMonths > 0)
-        assertTrue(snowball.totalMonths > 0)
+        // Partial payment on Bike reduces remaining below Card (22500 - 15000 = 7500 < 8000)
+        val payments = listOf(LoanPaymentEntity(loanId = 2L, amount = 15000.0, amountPaise = 1_500_000L))
+        val avalanche = NativeLedgerCalculator.simulateDebtPayoff(loans, payments, 3500.0, isAvalanche = true)
+        val snowball = NativeLedgerCalculator.simulateDebtPayoff(loans, payments, 3500.0, isAvalanche = false)
+        assertFalse(avalanche.nonAmortizing)
+        assertFalse(snowball.nonAmortizing)
+        assertFalse("ClosedOld" in avalanche.orderOfPayoff)
+        assertEquals("Card", avalanche.orderOfPayoff.first())
+        assertEquals("Bike", snowball.orderOfPayoff.first())
+        assertTrue(avalanche.totalInterestPaid < snowball.totalInterestPaid)
+
+        val predatory = listOf(
+            LoanEntity(id = 9L, name = "Spiral", principal = 100000.0, principalPaise = 10_000_000L, interestRate = 36.0, monthlyPayment = 500.0)
+        )
+        val nonAmort = NativeLedgerCalculator.simulateDebtPayoff(predatory, emptyList(), 0.0, isAvalanche = true)
+        assertTrue(nonAmort.nonAmortizing)
     }
 
     @Test
     fun csvAndXlsxRoundTripAndMoneyPaiseWork() {
         assertEquals(1500L, MoneyPaise.toPaise(15.0))
         assertEquals(15.0, MoneyPaise.toRupees(1500L), 0.001)
+        assertEquals(0L, MoneyPaise.toPaise(Double.NaN))
+        assertEquals(0L, MoneyPaise.toPaise(Double.POSITIVE_INFINITY))
+        assertEquals(0.0, MoneyPaise.roundRupees(Double.NaN), 0.0001)
+
         assertEquals("₹••••••", MoneyPaise.formatCurrency(1234.0, "₹", stealthMode = false, privacyMask = true))
         val decoy = MoneyPaise.formatCurrency(1234.0, "₹", stealthMode = true, privacyMask = false)
         assertTrue(decoy.startsWith("₹") && decoy != "₹1,234")
@@ -93,8 +149,6 @@ class FinancialCalculatorTest {
             TransactionEntity(id = 4L, accountId = 2L, type = "TRANSFER_IN", amount = 1000.0, category = "Transfer", transferAccountId = 1L, transferId = "xfer_1", timestamp = now - 2L * 86_400_000L)
         )
 
-        // Paired transfer keeps combined balance invariant: (5000 - 8000 - 1200 - 1000) + (500 + 1000) = -5200 + 1500
-        // Combined before transfer = 5000 + 500 - 9200 = -3700; after transfer = -3700
         val combined = FinancialCalculator.balance(fromAcc, txs) + FinancialCalculator.balance(toAcc, txs)
         assertEquals(5000.0 + 500.0 - 9200.0, combined, 0.01)
 

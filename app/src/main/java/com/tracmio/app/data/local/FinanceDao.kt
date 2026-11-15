@@ -34,8 +34,26 @@ interface FinanceDao {
     @Query("DELETE FROM transactions")
     suspend fun deleteAllTransactions()
 
+    @Query("SELECT * FROM transactions WHERE stableUid = :stableUid LIMIT 1")
+    suspend fun getTransactionByStableUid(stableUid: String): TransactionEntity?
+
+    @Query("SELECT stableUid FROM transactions")
+    suspend fun getAllTransactionStableUids(): List<String>
+
+    @Query("DELETE FROM transactions WHERE accountId = :accountId")
+    suspend fun deleteTransactionsForAccount(accountId: Long)
+
+    @Query("UPDATE transactions SET transferAccountId = NULL WHERE transferAccountId = :accountId")
+    suspend fun clearTransferAccountReferences(accountId: Long)
+
+    @Query("UPDATE transactions SET personId = NULL WHERE personId = :personId")
+    suspend fun clearPersonReferences(personId: Long)
+
     @Query("SELECT * FROM budgets ORDER BY id DESC")
     fun getAllBudgets(): Flow<List<BudgetEntity>>
+
+    @Query("SELECT * FROM budgets WHERE LOWER(category) = LOWER(:category) AND month = :month LIMIT 1")
+    suspend fun findBudgetByCategoryAndMonth(category: String, month: String): BudgetEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBudget(budget: BudgetEntity): Long
@@ -58,6 +76,9 @@ interface FinanceDao {
     @Delete
     suspend fun deleteGoal(goal: GoalEntity)
 
+    @Query("DELETE FROM goal_contributions WHERE goalId = :goalId")
+    suspend fun deleteContributionsForGoal(goalId: Long)
+
     @Query("SELECT * FROM goal_contributions ORDER BY timestamp DESC")
     fun getAllGoalContributions(): Flow<List<GoalContributionEntity>>
 
@@ -75,6 +96,9 @@ interface FinanceDao {
 
     @Delete
     suspend fun deleteLoan(loan: LoanEntity)
+
+    @Query("DELETE FROM loan_payments WHERE loanId = :loanId")
+    suspend fun deletePaymentsForLoan(loanId: Long)
 
     @Query("SELECT * FROM loan_payments ORDER BY timestamp DESC")
     fun getAllLoanPayments(): Flow<List<LoanPaymentEntity>>

@@ -12,6 +12,8 @@ interface NativeHostCallbacks {
     fun exportPlainJsonBackup(fileName: String)
     fun exportEncryptedJsonBackup(fileName: String, password: CharArray)
     fun importJsonBackup(decryptPassword: CharArray?)
+    fun importLegacyJsonBackup()
+    fun importLegacyDatabaseFile()
     fun exportWorkbookXlsx(fileName: String)
     fun exportCsv(fileName: String)
     fun importCsv()

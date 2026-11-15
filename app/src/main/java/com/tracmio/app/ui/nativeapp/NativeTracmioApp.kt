@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tracmio.app.data.local.TransactionEntity
+import com.tracmio.app.data.security.TracmioSecurityEngine
 
 @Composable
 fun NativeTracmioApp(
@@ -468,6 +469,48 @@ fun NativeTracmioApp(
                     viewModel = viewModel,
                     hostCallbacks = hostCallbacks
                 )
+            }
+
+            val vaultErr = state.vaultInitState as? TracmioSecurityEngine.VaultInitState.SecurityError
+            if (vaultErr != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(palette.background.copy(alpha = 0.96f))
+                        .padding(24.dp)
+                        .testTag("vault_security_error_overlay"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    LiquidGlassComponents(settings = settings, palette = palette) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            GlassBadge3D("🛡️", Color(0xFFFB7185), 52.dp)
+                            Text(
+                                vaultErr.title,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = palette.textPrimary
+                            )
+                            Text(
+                                vaultErr.detail,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = palette.textSecondary
+                            )
+                            if (vaultErr.canRetry) {
+                                Button(
+                                    onClick = { viewModel.retryVaultInitialization() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
+                                    modifier = Modifier.fillMaxWidth().testTag("vault_retry_button")
+                                ) {
+                                    Text("Retry Encrypted Vault Unlock", color = palette.background, fontWeight = FontWeight.ExtraBold)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -34,6 +34,12 @@ interface CustomTrackerDao {
     @Delete
     suspend fun deleteEntry(entry: CustomTrackerEntryEntity)
 
+    @Query("DELETE FROM tracker_entries WHERE trackerId = :trackerId")
+    suspend fun deleteEntriesForTracker(trackerId: Long)
+
+    @Query("UPDATE custom_trackers SET folderId = 0 WHERE folderId = :folderId")
+    suspend fun clearFolderReferences(folderId: Long)
+
     @Query("SELECT * FROM tracker_folders ORDER BY sortOrder ASC, id ASC")
     fun getAllFolders(): Flow<List<TrackerFolderEntity>>
 

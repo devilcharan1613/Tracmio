@@ -1,6 +1,7 @@
 package com.tracmio.app.ui.nativeapp
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tracmio.app.data.*
@@ -10,15 +11,35 @@ import com.tracmio.app.data.security.AppLockManager
 import com.tracmio.app.data.security.TracmioSecurityEngine
 import com.tracmio.app.data.services.NativeBackupService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class NativeTracmioViewModel(application: Application) : AndroidViewModel(application) {
+    data class PendingBackupPreview(
+        val plainJson: String,
+        val report: FinanceRepository.BackupPreviewReport
+    )
+
     private val appContext = application.applicationContext
     private val prefsStore = PreferencesAndThemeStore(appContext)
     private val appLockManager = AppLockManager(appContext)
-    private val db = TracmioDatabase.getInstance(appContext)
-    private val repository = FinanceRepository(db)
+    private val initializingVault = AtomicBoolean(false)
+
+    private val vaultStateFlow = MutableStateFlow<TracmioSecurityEngine.VaultInitState>(
+        TracmioSecurityEngine.VaultInitState.Loading
+    )
+    private val repositoryFlow = MutableStateFlow<FinanceRepository?>(null)
+    private val categoriesFlow = MutableStateFlow<List<CategoryEntity>>(emptyList())
 
     val settingsFlow: StateFlow<LiquidGlassSettings> = prefsStore.settingsFlow.stateIn(
         scope = viewModelScope,
@@ -39,40 +60,68 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     private val dailyReminderEnabledFlow = MutableStateFlow(prefsStore.isDailyReminderEnabled())
     private val monthlyBackupEnabledFlow = MutableStateFlow(prefsStore.isMonthlyBackupEnabled())
 
-    private val coreLedgerFlow = combine(
-        repository.accounts,
-        repository.transactions,
-        repository.budgets,
-        repository.goals,
-        repository.loans
-    ) { accounts, transactions, budgets, goals, loans ->
-        CoreLedgerSnapshot(accounts, transactions, budgets, goals, loans)
+    private val pendingBackupPreviewFlow = MutableStateFlow<PendingBackupPreview?>(null)
+    val pendingBackupPreview: StateFlow<PendingBackupPreview?> = pendingBackupPreviewFlow.asStateFlow()
+
+    private val lastRestoreReportFlow = MutableStateFlow<FinanceRepository.RestoreReport?>(null)
+    val lastRestoreReport: StateFlow<FinanceRepository.RestoreReport?> = lastRestoreReportFlow.asStateFlow()
+
+    private val coreLedgerFlow = repositoryFlow.flatMapLatest { repo ->
+        if (repo == null) {
+            flowOf(CoreLedgerSnapshot(emptyList(), emptyList(), emptyList(), emptyList(), emptyList()))
+        } else {
+            combine(
+                repo.accounts,
+                repo.transactions,
+                repo.budgets,
+                repo.goals,
+                repo.loans
+            ) { accounts, transactions, budgets, goals, loans ->
+                CoreLedgerSnapshot(accounts, transactions, budgets, goals, loans)
+            }
+        }
     }
 
-    private val planningExtrasFlow = combine(
-        repository.goalContributions,
-        repository.loanPayments,
-        repository.persons,
-        repository.customTrackers,
-        repository.trackerFolders
-    ) { contribs, payments, persons, trackers, folders ->
-        PlanningExtrasSnapshot(contribs, payments, persons, trackers, folders)
+    private val planningExtrasFlow = repositoryFlow.flatMapLatest { repo ->
+        if (repo == null) {
+            flowOf(PlanningExtrasSnapshot(emptyList(), emptyList(), emptyList(), emptyList(), emptyList()))
+        } else {
+            combine(
+                repo.goalContributions,
+                repo.loanPayments,
+                repo.persons,
+                repo.customTrackers,
+                repo.trackerFolders
+            ) { contribs, payments, persons, trackers, folders ->
+                PlanningExtrasSnapshot(contribs, payments, persons, trackers, folders)
+            }
+        }
     }
 
-    private val toolsEntitiesFlow = combine(
-        repository.subscriptions,
-        repository.academicEvents,
-        repository.reminders,
-        repository.khataEntries,
-        repository.wishlistCooldowns
-    ) { subs, academic, reminders, khata, wishlist ->
-        ToolsEntitiesSnapshot(subs, academic, reminders, khata, wishlist)
+    private val toolsEntitiesFlow = repositoryFlow.flatMapLatest { repo ->
+        if (repo == null) {
+            flowOf(ToolsEntitiesSnapshot(emptyList(), emptyList(), emptyList(), emptyList(), emptyList()))
+        } else {
+            combine(
+                repo.subscriptions,
+                repo.academicEvents,
+                repo.reminders,
+                repo.khataEntries,
+                repo.wishlistCooldowns
+            ) { subs, academic, reminders, khata, wishlist ->
+                ToolsEntitiesSnapshot(subs, academic, reminders, khata, wishlist)
+            }
+        }
     }
+
+    private val cashbackFlow = repositoryFlow.flatMapLatest { it?.cashbackRewards ?: flowOf(emptyList()) }
+    private val ppuFlow = repositoryFlow.flatMapLatest { it?.pricePerUseItems ?: flowOf(emptyList()) }
+    private val trackerEntriesFlow = repositoryFlow.flatMapLatest { it?.trackerEntries ?: flowOf(emptyList()) }
 
     private val rewardAndTrackFlow = combine(
-        repository.cashbackRewards,
-        repository.pricePerUseItems,
-        repository.trackerEntries,
+        cashbackFlow,
+        ppuFlow,
+        trackerEntriesFlow,
         quickChipsFlow,
         pendingRefundsFlow
     ) { cashback, ppu, trackerEntries, chips, refunds ->
@@ -90,12 +139,13 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     }
 
     private val auxFlagsFlow = combine(
+        vaultStateFlow,
         pinnedToolIdsFlow,
         pendingNotificationActionFlow,
         dailyReminderEnabledFlow,
         monthlyBackupEnabledFlow
-    ) { pinned, action, dailyRem, monthlyBackup ->
-        AuxFlagsSnapshot(pinned, action, dailyRem, monthlyBackup)
+    ) { vaultState, pinned, action, dailyRem, monthlyBackup ->
+        AuxFlagsSnapshot(vaultState, pinned, action, dailyRem, monthlyBackup)
     }
 
     val uiState: StateFlow<NativeTracmioUiState> = combine(
@@ -113,11 +163,18 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         val flags = array[4] as UiFlagsSnapshot
         val aux = array[5] as AuxFlagsSnapshot
 
-        val totalBal = core.accounts.sumOf { FinancialCalculator.balance(it, core.transactions) }
-        val totalInc = core.transactions.filter { it.type.equals("INCOME", true) }.sumOf { it.amount }
-        val totalExp = core.transactions.filter { it.type.equals("EXPENSE", true) }.sumOf { it.amount }
+        val totalBal = MoneyPaise.roundRupees(core.accounts.sumOf { FinancialCalculator.balance(it, core.transactions) })
+        val totalInc = MoneyPaise.toRupees(
+            core.transactions.filter { it.type.equals("INCOME", true) }
+                .sumOf { if (it.amountPaise > 0L) it.amountPaise else MoneyPaise.toPaise(it.amount) }
+        )
+        val totalExp = MoneyPaise.toRupees(
+            core.transactions.filter { it.type.equals("EXPENSE", true) }
+                .sumOf { if (it.amountPaise > 0L) it.amountPaise else MoneyPaise.toPaise(it.amount) }
+        )
 
         NativeTracmioUiState(
+            vaultInitState = aux.vaultInitState,
             accounts = core.accounts,
             transactions = core.transactions,
             budgets = core.budgets,
@@ -156,6 +213,7 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = NativeTracmioUiState(
+            vaultInitState = vaultStateFlow.value,
             quickSpendChips = quickChipsFlow.value,
             pendingRefunds = pendingRefundsFlow.value,
             isAppLocked = isAppLockedFlow.value,
@@ -167,32 +225,78 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     )
 
     init {
+        repositoryFlow
+            .flatMapLatest { it?.categories ?: flowOf(emptyList()) }
+            .onEach { categoriesFlow.value = it }
+            .launchIn(viewModelScope)
+        initializeVault()
+    }
+
+    fun retryVaultInitialization() {
+        if (repositoryFlow.value != null) return
+        initializeVault()
+    }
+
+    private fun initializeVault() {
+        if (!initializingVault.compareAndSet(false, true)) return
         viewModelScope.launch(Dispatchers.IO) {
-            LegacyMigrationGuard.runOneTimeLegacyMigrationIfNeeded(appContext, repository)
-            val existingAccounts = repository.accounts.first()
-            if (existingAccounts.isEmpty() && !prefsStore.hasSeededDefaults()) {
-                repository.insertAccount(
-                    AccountEntity(
-                        name = "Cash Wallet",
-                        accountType = "Wallet",
-                        balance = 0.0,
-                        balancePaise = 0L,
-                        colorHex = "#00F5D4"
-                    )
-                )
-                repository.insertAccount(
-                    AccountEntity(
-                        name = "Primary Bank",
-                        accountType = "Bank",
-                        balance = 0.0,
-                        balancePaise = 0L,
-                        colorHex = "#38BDF8"
-                    )
-                )
-                prefsStore.markSeededDefaults()
+            try {
+                vaultStateFlow.value = TracmioSecurityEngine.VaultInitState.Loading
+                when (val result = TracmioDatabase.openVaultOrFail(appContext)) {
+                    is VaultOpenResult.Success -> {
+                        val repo = FinanceRepository(result.database)
+                        repositoryFlow.value = repo
+                        vaultStateFlow.value = TracmioSecurityEngine.VaultInitState.Ready
+
+                        LegacyMigrationGuard.runOneTimeLegacyMigrationIfNeeded(appContext, repo)
+                        val existingAccounts = repo.accounts.first()
+                        if (existingAccounts.isEmpty() && !prefsStore.hasSeededDefaults()) {
+                            repo.insertAccount(
+                                AccountEntity(
+                                    name = "Cash Wallet",
+                                    accountType = "Wallet",
+                                    balance = 0.0,
+                                    balancePaise = 0L,
+                                    colorHex = "#00F5D4"
+                                )
+                            )
+                            repo.insertAccount(
+                                AccountEntity(
+                                    name = "Primary Bank",
+                                    accountType = "Bank",
+                                    balance = 0.0,
+                                    balancePaise = 0L,
+                                    colorHex = "#38BDF8"
+                                )
+                            )
+                            prefsStore.markSeededDefaults()
+                        }
+                    }
+                    is VaultOpenResult.Failure -> {
+                        repositoryFlow.value = null
+                        vaultStateFlow.value = TracmioSecurityEngine.VaultInitState.SecurityError(
+                            title = result.title,
+                            detail = result.detail,
+                            canRetry = true
+                        )
+                    }
+                }
+            } finally {
+                initializingVault.set(false)
             }
         }
     }
+
+    private fun requireRepo(): FinanceRepository? {
+        val repo = repositoryFlow.value
+        if (repo == null) {
+            statusMessageFlow.value = "Encrypted vault is not unlocked yet"
+        }
+        return repo
+    }
+
+    private fun isValidPositiveAmount(v: Double): Boolean = v.isFinite() && v > 0.0
+    private fun isValidNonNegativeAmount(v: Double): Boolean = v.isFinite() && v >= 0.0
 
     fun updateSettings(transform: (LiquidGlassSettings) -> LiquidGlassSettings) = prefsStore.updateSettings(transform)
     fun togglePrivacyMask() = prefsStore.updatePrivacyMask(!settingsFlow.value.privacyMaskActive)
@@ -212,40 +316,48 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun executeQuickSpendChip(chip: QuickSpendChip) {
+        if (!isValidPositiveAmount(chip.amount)) return
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val accounts = repository.accounts.first()
+            val accounts = repo.accounts.first()
             val targetAcc = accounts.firstOrNull { it.accountType.equals("Wallet", true) || it.accountType.equals("Cash", true) }
                 ?: accounts.firstOrNull()
                 ?: return@launch
+            val cleanAmt = MoneyPaise.roundRupees(chip.amount)
             val tx = TransactionEntity(
                 accountId = targetAcc.id,
                 type = "EXPENSE",
-                amount = chip.amount,
-                amountPaise = MoneyPaise.toPaise(chip.amount),
+                amount = cleanAmt,
+                amountPaise = MoneyPaise.toPaise(cleanAmt),
                 category = chip.category,
                 paymentMethod = if (targetAcc.accountType.equals("Cash", true)) "Cash" else "UPI",
                 note = "${chip.emoji} ${chip.title} (Quick Spend)"
             )
-            val id = repository.insertTransaction(tx)
-            applyRoundUpIfEnabled(chip.amount)
+            val id = repo.insertTransaction(tx)
+            applyRoundUpIfEnabled(repo, cleanAmt)
             deletedTxFlow.value = tx.copy(id = id)
             deletedChipFlow.value = null
-            statusMessageFlow.value = "Logged ${chip.title} (${settingsFlow.value.currencySymbol}${chip.amount.toInt()})"
+            statusMessageFlow.value = "Logged ${chip.title} (${settingsFlow.value.currencySymbol}${cleanAmt.toInt()})"
         }
     }
 
     fun addQuickSpendChip(emoji: String, title: String, amount: Double, category: String = "Food & Chai") {
+        val cleanTitle = TracmioSecurityEngine.sanitizeInput(title, 30)
+        if (cleanTitle.isBlank() || !isValidPositiveAmount(amount)) {
+            statusMessageFlow.value = "Enter a valid chip title and positive amount"
+            return
+        }
         val newChip = QuickSpendChip(
             id = "chip_${System.currentTimeMillis()}",
             emoji = emoji,
-            title = TracmioSecurityEngine.sanitizeInput(title, 30),
-            amount = amount,
-            category = category
+            title = cleanTitle,
+            amount = MoneyPaise.roundRupees(amount),
+            category = TracmioSecurityEngine.sanitizeInput(category, 40).ifBlank { "Food & Chai" }
         )
         val updated = quickChipsFlow.value + newChip
         quickChipsFlow.value = updated
         prefsStore.saveQuickSpendChips(updated)
-        statusMessageFlow.value = "Added Quick Spend chip: $title"
+        statusMessageFlow.value = "Added Quick Spend chip: $cleanTitle"
     }
 
     fun deleteQuickSpendChip(chip: QuickSpendChip) {
@@ -267,12 +379,13 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
             statusMessageFlow.value = "Restored chip ${delChip.title}"
             return
         }
+        val repo = requireRepo() ?: return
         val delTx = deletedTxFlow.value
         val delPair = deletedPairTxFlow.value
         if (delPair.isNotEmpty()) {
             viewModelScope.launch(Dispatchers.IO) {
-                repository.runInTransaction {
-                    delPair.forEach { repository.insertTransaction(it.copy(id = 0)) }
+                repo.runInTransaction {
+                    delPair.forEach { repo.insertTransaction(it.copy(id = 0)) }
                 }
                 deletedPairTxFlow.value = emptyList()
                 deletedTxFlow.value = null
@@ -282,12 +395,12 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         }
         if (delTx != null) {
             viewModelScope.launch(Dispatchers.IO) {
-                val existing = repository.transactions.first().any { it.id == delTx.id }
+                val existing = repo.transactions.first().any { it.id == delTx.id }
                 if (existing) {
-                    repository.deleteTransaction(delTx)
+                    repo.deleteTransaction(delTx)
                     statusMessageFlow.value = "Undid quick spend"
                 } else {
-                    repository.insertTransaction(delTx.copy(id = 0))
+                    repo.insertTransaction(delTx.copy(id = 0))
                     statusMessageFlow.value = "Restored deleted transaction"
                 }
                 deletedTxFlow.value = null
@@ -304,22 +417,31 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         statementDay: Int = 1,
         dueDay: Int = 15
     ) {
+        val cleanName = TracmioSecurityEngine.sanitizeInput(name, 60)
+        if (cleanName.isBlank() || !balance.isFinite() || !isValidNonNegativeAmount(creditLimit)) {
+            statusMessageFlow.value = "Enter a valid account name and finite balance"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanBal = MoneyPaise.roundRupees(balance)
+        val cleanLimit = MoneyPaise.roundRupees(creditLimit)
+        val safeStatementDay = statementDay.coerceIn(1, 28)
+        val safeDueDay = dueDay.coerceIn(1, 28)
         viewModelScope.launch(Dispatchers.IO) {
-            val cleanName = TracmioSecurityEngine.sanitizeInput(name, 60)
             if (editingId != null) {
-                val old = repository.getAccountById(editingId)
+                val old = repo.getAccountById(editingId)
                 if (old != null) {
-                    repository.updateAccount(
+                    repo.updateAccount(
                         old.copy(
                             name = cleanName,
                             accountType = accountType,
                             type = accountType,
-                            balance = balance,
-                            balancePaise = MoneyPaise.toPaise(balance),
-                            creditLimit = creditLimit,
-                            creditLimitPaise = MoneyPaise.toPaise(creditLimit),
-                            statementDay = statementDay,
-                            dueDay = dueDay,
+                            balance = cleanBal,
+                            balancePaise = MoneyPaise.toPaise(cleanBal),
+                            creditLimit = cleanLimit,
+                            creditLimitPaise = MoneyPaise.toPaise(cleanLimit),
+                            statementDay = safeStatementDay,
+                            dueDay = safeDueDay,
                             updatedAt = System.currentTimeMillis()
                         )
                     )
@@ -327,17 +449,17 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
                     return@launch
                 }
             }
-            repository.insertAccount(
+            repo.insertAccount(
                 AccountEntity(
                     name = cleanName,
                     accountType = accountType,
                     type = accountType,
-                    balance = balance,
-                    balancePaise = MoneyPaise.toPaise(balance),
-                    creditLimit = creditLimit,
-                    creditLimitPaise = MoneyPaise.toPaise(creditLimit),
-                    statementDay = statementDay,
-                    dueDay = dueDay
+                    balance = cleanBal,
+                    balancePaise = MoneyPaise.toPaise(cleanBal),
+                    creditLimit = cleanLimit,
+                    creditLimitPaise = MoneyPaise.toPaise(cleanLimit),
+                    statementDay = safeStatementDay,
+                    dueDay = safeDueDay
                 )
             )
             statusMessageFlow.value = "Created account $cleanName"
@@ -345,43 +467,53 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun updateAccountAllocations(account: AccountEntity, allocations: List<AccountAllocation>) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val json = NativeLedgerCalculator.serializeAllocations(allocations)
-            repository.updateAccount(account.copy(allocationsJson = json, updatedAt = System.currentTimeMillis()))
+            repo.updateAccount(account.copy(allocationsJson = json, updatedAt = System.currentTimeMillis()))
             statusMessageFlow.value = "Updated allocations for ${account.name}"
         }
     }
 
     fun reconcileAccountBalance(account: AccountEntity, targetActualBalance: Double, customNote: String? = null) {
+        if (!targetActualBalance.isFinite()) {
+            statusMessageFlow.value = "Enter a valid target balance"
+            return
+        }
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val applied = reconcileAccountBalanceInternal(account, targetActualBalance, customNote)
+            val applied = reconcileAccountBalanceInternal(repo, account, targetActualBalance, customNote)
             if (applied) {
                 statusMessageFlow.value = "Reconciled ${account.name}"
+            } else {
+                statusMessageFlow.value = "${account.name} already matches target balance"
             }
         }
     }
 
     private suspend fun reconcileAccountBalanceInternal(
+        repo: FinanceRepository,
         account: AccountEntity,
         targetActualBalance: Double,
         customNote: String? = null
     ): Boolean {
-        val txns = repository.transactions.first()
+        val txns = repo.transactions.first()
         val currentBal = FinancialCalculator.balance(account, txns)
         val delta = targetActualBalance - currentBal
         if (kotlin.math.abs(delta) >= 0.01) {
+            val cleanAbs = MoneyPaise.roundRupees(kotlin.math.abs(delta))
             val notePrefix = customNote?.takeIf { it.isNotBlank() }?.let { TracmioSecurityEngine.sanitizeInput(it, 120) }
             val finalNote = if (notePrefix != null) {
                 "$notePrefix · Reconciled ${account.name} to ${settingsFlow.value.currencySymbol}${"%,.2f".format(targetActualBalance)}"
             } else {
                 "Reconciled ${account.name} to ${settingsFlow.value.currencySymbol}${"%,.2f".format(targetActualBalance)}"
             }
-            repository.insertTransaction(
+            repo.insertTransaction(
                 TransactionEntity(
                     accountId = account.id,
                     type = if (delta >= 0) "INCOME" else "EXPENSE",
-                    amount = kotlin.math.abs(delta),
-                    amountPaise = MoneyPaise.toPaise(kotlin.math.abs(delta)),
+                    amount = cleanAbs,
+                    amountPaise = MoneyPaise.toPaise(cleanAbs),
                     category = "Balance Adjustment",
                     paymentMethod = account.accountType,
                     note = finalNote
@@ -394,19 +526,25 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
 
     fun applyCashDenominationCount(lines: List<CashCountLine>, note: String, accountId: Long?) {
         val total = NativeLedgerCalculator.computeCashDenominationTotal(lines)
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val accounts = repository.accounts.first()
+            val accounts = repo.accounts.first()
             val target = accounts.firstOrNull { it.id == accountId }
                 ?: accounts.firstOrNull { it.accountType.equals("Cash", true) || it.accountType.equals("Wallet", true) }
                 ?: return@launch
-            reconcileAccountBalanceInternal(target, total, note.ifBlank { "Cash Denomination Count" })
+            reconcileAccountBalanceInternal(repo, target, total, note.ifBlank { "Cash Denomination Count" })
             statusMessageFlow.value = "Cash count applied to ${target.name} (${settingsFlow.value.currencySymbol}${"%,.0f".format(total)})"
         }
     }
 
     fun performAtmWithdrawal(amount: Double) {
+        if (!isValidPositiveAmount(amount)) {
+            statusMessageFlow.value = "Enter a positive withdrawal amount"
+            return
+        }
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val accounts = repository.accounts.first()
+            val accounts = repo.accounts.first()
             val bank = accounts.firstOrNull { it.accountType.equals("Bank", true) } ?: accounts.firstOrNull() ?: return@launch
             val cash = accounts.firstOrNull { it.accountType.equals("Cash", true) || it.accountType.equals("Wallet", true) }
                 ?: accounts.lastOrNull() ?: return@launch
@@ -419,17 +557,28 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun transferFunds(fromId: Long, toId: Long, amount: Double, note: String) {
-        if (amount <= 0.0 || fromId == toId) return
+        if (!isValidPositiveAmount(amount) || fromId == toId) {
+            statusMessageFlow.value = "Select distinct accounts and a positive transfer amount"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanAmt = MoneyPaise.roundRupees(amount)
         viewModelScope.launch(Dispatchers.IO) {
+            val fromAcc = repo.getAccountById(fromId)
+            val toAcc = repo.getAccountById(toId)
+            if (fromAcc == null || toAcc == null) {
+                statusMessageFlow.value = "Transfer accounts no longer exist"
+                return@launch
+            }
             val xferId = "xfer_${System.currentTimeMillis()}"
             val cleanNote = TracmioSecurityEngine.sanitizeInput(note, 150)
-            repository.runInTransaction {
-                repository.insertTransaction(
+            repo.runInTransaction {
+                repo.insertTransaction(
                     TransactionEntity(
                         accountId = fromId,
                         type = "TRANSFER_OUT",
-                        amount = amount,
-                        amountPaise = MoneyPaise.toPaise(amount),
+                        amount = cleanAmt,
+                        amountPaise = MoneyPaise.toPaise(cleanAmt),
                         category = "Transfer",
                         transferAccountId = toId,
                         transferId = xferId,
@@ -437,12 +586,12 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
                         note = cleanNote
                     )
                 )
-                repository.insertTransaction(
+                repo.insertTransaction(
                     TransactionEntity(
                         accountId = toId,
                         type = "TRANSFER_IN",
-                        amount = amount,
-                        amountPaise = MoneyPaise.toPaise(amount),
+                        amount = cleanAmt,
+                        amountPaise = MoneyPaise.toPaise(cleanAmt),
                         category = "Transfer",
                         transferAccountId = fromId,
                         transferId = xferId,
@@ -451,7 +600,7 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
                     )
                 )
             }
-            statusMessageFlow.value = "Transferred ${settingsFlow.value.currencySymbol}${"%,.0f".format(amount)}"
+            statusMessageFlow.value = "Transferred ${settingsFlow.value.currencySymbol}${"%,.0f".format(cleanAmt)}"
         }
     }
 
@@ -470,34 +619,46 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         cashPortion: Double,
         upiPortion: Double
     ) {
+        if (!isValidPositiveAmount(amount) || !cashPortion.isFinite() || !upiPortion.isFinite() || cashPortion < 0.0 || upiPortion < 0.0) {
+            statusMessageFlow.value = "Enter a valid positive transaction amount"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanAmt = MoneyPaise.roundRupees(amount)
         viewModelScope.launch(Dispatchers.IO) {
             val cleanNote = TracmioSecurityEngine.sanitizeInput(note, 300)
             val hashtags = Regex("#[A-Za-z0-9_]+").findAll(cleanNote).joinToString(" ") { it.value }
+            val cleanCategory = TracmioSecurityEngine.sanitizeInput(category, 60).ifBlank { "Other" }
+            val cleanSub = TracmioSecurityEngine.sanitizeInput(subcategory, 60)
+            val cleanWarranty = TracmioSecurityEngine.sanitizeInput(warrantyDate, 30)
 
             if (paymentMethod == "Half-Cash + Half-UPI Split" && editingId == null && (cashPortion > 0.0 || upiPortion > 0.0)) {
-                val cashAmt = if (cashPortion > 0) cashPortion else amount / 2.0
-                val upiAmt = if (upiPortion > 0) upiPortion else (amount - cashAmt).coerceAtLeast(0.0)
-                val accounts = repository.accounts.first()
+                val cashAmt = MoneyPaise.roundRupees(if (cashPortion > 0) cashPortion else cleanAmt / 2.0)
+                val upiAmt = MoneyPaise.roundRupees(if (upiPortion > 0) upiPortion else (cleanAmt - cashAmt).coerceAtLeast(0.0))
+                val accounts = repo.accounts.first()
                 val cashAcc = accounts.firstOrNull { it.accountType.equals("Cash", true) || it.accountType.equals("Wallet", true) }?.id ?: accountId
-                repository.runInTransaction {
+                repo.runInTransaction {
                     if (cashAmt > 0.0) {
-                        repository.insertTransaction(
+                        repo.insertTransaction(
                             TransactionEntity(
                                 accountId = cashAcc, type = type.uppercase(), amount = cashAmt, amountPaise = MoneyPaise.toPaise(cashAmt),
-                                category = category, subcategory = subcategory, paymentMethod = "Cash", note = "$cleanNote [Cash Split]".trim(), hashtags = hashtags, warrantyDate = warrantyDate
+                                category = cleanCategory, subcategory = cleanSub, paymentMethod = "Cash",
+                                note = "$cleanNote [Cash Split]".trim(), hashtags = hashtags, warrantyDate = cleanWarranty
                             )
                         )
                     }
                     if (upiAmt > 0.0) {
-                        repository.insertTransaction(
+                        repo.insertTransaction(
                             TransactionEntity(
                                 accountId = accountId, type = type.uppercase(), amount = upiAmt, amountPaise = MoneyPaise.toPaise(upiAmt),
-                                category = category, subcategory = subcategory, paymentMethod = "UPI", upiApp = upiApp.ifBlank { "UPI" }, note = "$cleanNote [UPI Split]".trim(), hashtags = hashtags, warrantyDate = warrantyDate
+                                category = cleanCategory, subcategory = cleanSub, paymentMethod = "UPI",
+                                upiApp = upiApp.ifBlank { "UPI" }, note = "$cleanNote [UPI Split]".trim(),
+                                hashtags = hashtags, warrantyDate = cleanWarranty
                             )
                         )
                     }
                     if (type.equals("EXPENSE", true)) {
-                        applyRoundUpIfEnabled(cashAmt + upiAmt)
+                        applyRoundUpIfEnabled(repo, cashAmt + upiAmt)
                     }
                 }
                 statusMessageFlow.value = "Saved Half-Cash + Half-UPI split"
@@ -505,30 +666,30 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
             }
 
             if (editingId != null) {
-                repository.runInTransaction {
-                    val existing = repository.getTransactionById(editingId)
+                repo.runInTransaction {
+                    val existing = repo.getTransactionById(editingId)
                     if (existing != null && existing.allocationId.isNotBlank() && !existing.type.equals("TRANSFER", true)) {
-                        repository.getAccountById(existing.accountId)?.let { prevAcc ->
+                        repo.getAccountById(existing.accountId)?.let { prevAcc ->
                             val reverseType = if (existing.type.equals("INCOME", true)) "EXPENSE" else "INCOME"
                             val revertedAcc = NativeLedgerCalculator.adjustAllocationsForTransaction(
                                 prevAcc, existing.allocationId, reverseType, existing.amount
                             )
-                            if (revertedAcc != prevAcc) repository.updateAccount(revertedAcc)
+                            if (revertedAcc != prevAcc) repo.updateAccount(revertedAcc)
                         }
                     }
                     val updated = if (existing != null) {
                         existing.copy(
                             accountId = accountId,
                             type = type.uppercase(),
-                            amount = amount,
-                            amountPaise = MoneyPaise.toPaise(amount),
-                            category = category,
-                            subcategory = subcategory,
+                            amount = cleanAmt,
+                            amountPaise = MoneyPaise.toPaise(cleanAmt),
+                            category = cleanCategory,
+                            subcategory = cleanSub,
                             paymentMethod = paymentMethod,
                             upiApp = upiApp,
                             note = cleanNote,
                             hashtags = hashtags,
-                            warrantyDate = warrantyDate,
+                            warrantyDate = cleanWarranty,
                             allocationId = allocationId
                         )
                     } else {
@@ -536,25 +697,25 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
                             id = editingId,
                             accountId = accountId,
                             type = type.uppercase(),
-                            amount = amount,
-                            amountPaise = MoneyPaise.toPaise(amount),
-                            category = category,
-                            subcategory = subcategory,
+                            amount = cleanAmt,
+                            amountPaise = MoneyPaise.toPaise(cleanAmt),
+                            category = cleanCategory,
+                            subcategory = cleanSub,
                             paymentMethod = paymentMethod,
                             upiApp = upiApp,
                             note = cleanNote,
                             hashtags = hashtags,
-                            warrantyDate = warrantyDate,
+                            warrantyDate = cleanWarranty,
                             allocationId = allocationId
                         )
                     }
-                    repository.updateTransaction(updated)
+                    repo.updateTransaction(updated)
                     if (allocationId.isNotBlank() && !type.equals("TRANSFER", true)) {
-                        repository.getAccountById(accountId)?.let { newAcc ->
+                        repo.getAccountById(accountId)?.let { newAcc ->
                             val adjustedAcc = NativeLedgerCalculator.adjustAllocationsForTransaction(
-                                newAcc, allocationId, type, amount
+                                newAcc, allocationId, type, cleanAmt
                             )
-                            if (adjustedAcc != newAcc) repository.updateAccount(adjustedAcc)
+                            if (adjustedAcc != newAcc) repo.updateAccount(adjustedAcc)
                         }
                     }
                 }
@@ -563,71 +724,72 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
                 val tx = TransactionEntity(
                     accountId = accountId,
                     type = type.uppercase(),
-                    amount = amount,
-                    amountPaise = MoneyPaise.toPaise(amount),
-                    category = category,
-                    subcategory = subcategory,
+                    amount = cleanAmt,
+                    amountPaise = MoneyPaise.toPaise(cleanAmt),
+                    category = cleanCategory,
+                    subcategory = cleanSub,
                     paymentMethod = paymentMethod,
                     upiApp = upiApp,
                     note = cleanNote,
                     hashtags = hashtags,
-                    warrantyDate = warrantyDate,
+                    warrantyDate = cleanWarranty,
                     allocationId = allocationId
                 )
-                repository.runInTransaction {
-                    repository.insertTransaction(tx)
-                    val acc = repository.getAccountById(accountId)
+                repo.runInTransaction {
+                    repo.insertTransaction(tx)
+                    val acc = repo.getAccountById(accountId)
                     if (acc != null) {
                         if (type.equals("INCOME", true)) {
-                            val splitAcc = NativeLedgerCalculator.applyAutoSplitToAllocations(acc, amount)
-                            if (splitAcc != acc) repository.updateAccount(splitAcc)
+                            val splitAcc = NativeLedgerCalculator.applyAutoSplitToAllocations(acc, cleanAmt)
+                            if (splitAcc != acc) repo.updateAccount(splitAcc)
                         } else if (allocationId.isNotBlank()) {
-                            val adjAcc = NativeLedgerCalculator.adjustAllocationsForTransaction(acc, allocationId, type, amount)
-                            if (adjAcc != acc) repository.updateAccount(adjAcc)
+                            val adjAcc = NativeLedgerCalculator.adjustAllocationsForTransaction(acc, allocationId, type, cleanAmt)
+                            if (adjAcc != acc) repo.updateAccount(adjAcc)
                         }
                     }
-                    if (type.equals("EXPENSE", true)) applyRoundUpIfEnabled(amount)
+                    if (type.equals("EXPENSE", true)) applyRoundUpIfEnabled(repo, cleanAmt)
                 }
-                statusMessageFlow.value = "Saved ${type.lowercase()} (${settingsFlow.value.currencySymbol}${"%,.0f".format(amount)})"
+                statusMessageFlow.value = "Saved ${type.lowercase()} (${settingsFlow.value.currencySymbol}${"%,.0f".format(cleanAmt)})"
             }
         }
     }
 
-    private suspend fun applyRoundUpIfEnabled(expenseAmount: Double) {
+    private suspend fun applyRoundUpIfEnabled(repo: FinanceRepository, expenseAmount: Double) {
         if (!settingsFlow.value.roundUpEnabled) return
         val spare = NativeLedgerCalculator.computeRoundUpSpareChange(expenseAmount, 10)
         if (spare > 0.0) {
-            val firstGoal = repository.goals.first().firstOrNull()
+            val firstGoal = repo.goals.first().firstOrNull()
             if (firstGoal != null) {
                 val cur = if (firstGoal.currentAmount > 0) firstGoal.currentAmount else MoneyPaise.toRupees(firstGoal.currentPaise)
-                val next = cur + spare
-                repository.updateGoal(firstGoal.copy(currentAmount = next, currentPaise = MoneyPaise.toPaise(next)))
-                repository.insertGoalContribution(GoalContributionEntity(goalId = firstGoal.id, amount = spare, note = "Round-Up Spare Change"))
+                val next = MoneyPaise.roundRupees(cur + spare)
+                repo.updateGoal(firstGoal.copy(currentAmount = next, currentPaise = MoneyPaise.toPaise(next)))
+                repo.insertGoalContribution(GoalContributionEntity(goalId = firstGoal.id, amount = spare, amountPaise = MoneyPaise.toPaise(spare), note = "Round-Up Spare Change"))
             }
         }
     }
 
     fun repeatTransaction(tx: TransactionEntity) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val repeated = tx.copy(
                 id = 0,
-                stableUid = java.util.UUID.randomUUID().toString(),
+                stableUid = UUID.randomUUID().toString(),
                 timestamp = System.currentTimeMillis()
             )
-            repository.runInTransaction {
-                repository.insertTransaction(repeated)
-                val acc = repository.getAccountById(repeated.accountId)
+            repo.runInTransaction {
+                repo.insertTransaction(repeated)
+                val acc = repo.getAccountById(repeated.accountId)
                 if (acc != null) {
                     if (repeated.type.equals("INCOME", true)) {
                         val splitAcc = NativeLedgerCalculator.applyAutoSplitToAllocations(acc, repeated.amount)
-                        if (splitAcc != acc) repository.updateAccount(splitAcc)
+                        if (splitAcc != acc) repo.updateAccount(splitAcc)
                     } else if (repeated.allocationId.isNotBlank()) {
                         val adjAcc = NativeLedgerCalculator.adjustAllocationsForTransaction(acc, repeated.allocationId, repeated.type, repeated.amount)
-                        if (adjAcc != acc) repository.updateAccount(adjAcc)
+                        if (adjAcc != acc) repo.updateAccount(adjAcc)
                     }
                 }
                 if (repeated.type.equals("EXPENSE", true)) {
-                    applyRoundUpIfEnabled(repeated.amount)
+                    applyRoundUpIfEnabled(repo, repeated.amount)
                 }
             }
             statusMessageFlow.value = "Repeated transaction (${tx.category})"
@@ -635,16 +797,17 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun deleteTransaction(tx: TransactionEntity) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
             deletedChipFlow.value = null
             val tid = tx.transferId
             if (!tid.isNullOrBlank()) {
-                val linked = repository.getTransactionsByTransferId(tid)
+                val linked = repo.getTransactionsByTransferId(tid)
                 if (linked.size > 1) {
                     deletedPairTxFlow.value = linked
                     deletedTxFlow.value = tx
-                    repository.runInTransaction {
-                        linked.forEach { repository.deleteTransaction(it) }
+                    repo.runInTransaction {
+                        linked.forEach { repo.deleteTransaction(it) }
                     }
                     statusMessageFlow.value = "Deleted linked transfer pair"
                     return@launch
@@ -652,17 +815,17 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
             }
             deletedPairTxFlow.value = emptyList()
             deletedTxFlow.value = tx
-            repository.runInTransaction {
+            repo.runInTransaction {
                 if (tx.allocationId.isNotBlank() && !tx.type.equals("TRANSFER", true)) {
-                    repository.getAccountById(tx.accountId)?.let { acc ->
+                    repo.getAccountById(tx.accountId)?.let { acc ->
                         val reverseType = if (tx.type.equals("INCOME", true)) "EXPENSE" else "INCOME"
                         val reverted = NativeLedgerCalculator.adjustAllocationsForTransaction(
                             acc, tx.allocationId, reverseType, tx.amount
                         )
-                        if (reverted != acc) repository.updateAccount(reverted)
+                        if (reverted != acc) repo.updateAccount(reverted)
                     }
                 }
-                repository.deleteTransaction(tx)
+                repo.deleteTransaction(tx)
             }
             statusMessageFlow.value = "Deleted ${tx.category}"
         }
@@ -670,28 +833,35 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
 
     // Pending Refunds
     fun addPendingRefund(title: String, amount: Double, source: String = "Online Order") {
+        val cleanTitle = TracmioSecurityEngine.sanitizeInput(title, 80)
+        if (cleanTitle.isBlank() || !isValidPositiveAmount(amount)) {
+            statusMessageFlow.value = "Enter a valid refund title and positive amount"
+            return
+        }
         val next = pendingRefundsFlow.value + PendingRefundItem(
             id = "ref_${System.currentTimeMillis()}",
-            title = TracmioSecurityEngine.sanitizeInput(title, 80),
-            source = source,
-            amount = amount
+            title = cleanTitle,
+            source = TracmioSecurityEngine.sanitizeInput(source, 50).ifBlank { "Online Order" },
+            amount = MoneyPaise.roundRupees(amount)
         )
         pendingRefundsFlow.value = next
         prefsStore.savePendingRefunds(next)
-        statusMessageFlow.value = "Added pending refund: $title"
+        statusMessageFlow.value = "Added pending refund: $cleanTitle"
     }
 
     fun markRefundReceived(ref: PendingRefundItem) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val acc = repository.accounts.first().firstOrNull()
-            if (acc != null && ref.amount > 0.0) {
-                repository.runInTransaction {
-                    repository.insertTransaction(
+            val acc = repo.accounts.first().firstOrNull()
+            if (acc != null && isValidPositiveAmount(ref.amount)) {
+                val amt = MoneyPaise.roundRupees(ref.amount)
+                repo.runInTransaction {
+                    repo.insertTransaction(
                         TransactionEntity(
                             accountId = acc.id,
                             type = "INCOME",
-                            amount = ref.amount,
-                            amountPaise = MoneyPaise.toPaise(ref.amount),
+                            amount = amt,
+                            amountPaise = MoneyPaise.toPaise(amt),
                             category = "Other",
                             paymentMethod = "Bank Transfer",
                             note = "📦 Refund received: ${ref.title}"
@@ -712,52 +882,69 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
 
     // People & Khata
     fun addPerson(name: String, upiId: String, openingBalance: Double) {
+        val cleanName = TracmioSecurityEngine.sanitizeInput(name, 60)
+        if (cleanName.isBlank() || !openingBalance.isFinite()) {
+            statusMessageFlow.value = "Enter a valid person name and balance"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanBal = MoneyPaise.roundRupees(openingBalance)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertPerson(
+            repo.insertPerson(
                 PersonEntity(
-                    name = TracmioSecurityEngine.sanitizeInput(name, 60),
+                    name = cleanName,
                     upiId = TracmioSecurityEngine.sanitizeInput(upiId, 80),
-                    netBalance = openingBalance,
-                    netBalancePaise = MoneyPaise.toPaise(openingBalance)
+                    netBalance = cleanBal,
+                    netBalancePaise = MoneyPaise.toPaise(cleanBal)
                 )
             )
-            statusMessageFlow.value = "Added $name"
+            statusMessageFlow.value = "Added $cleanName"
         }
     }
 
     fun settlePerson(person: PersonEntity) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            repository.updatePerson(person.copy(netBalance = 0.0, netBalancePaise = 0L))
+            repo.updatePerson(person.copy(netBalance = 0.0, netBalancePaise = 0L))
             statusMessageFlow.value = "Settled balance with ${person.name}"
         }
     }
 
     fun addKhataEntry(shopOrFriend: String, itemDescription: String, amount: Double) {
+        val cleanShop = TracmioSecurityEngine.sanitizeInput(shopOrFriend, 60)
+        if (cleanShop.isBlank() || !isValidPositiveAmount(amount)) {
+            statusMessageFlow.value = "Enter a valid shop/friend name and positive amount"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanAmt = MoneyPaise.roundRupees(amount)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertKhataEntry(
+            repo.insertKhataEntry(
                 KhataEntryEntity(
-                    shopOrFriend = TracmioSecurityEngine.sanitizeInput(shopOrFriend, 60),
+                    shopOrFriend = cleanShop,
                     itemDescription = TracmioSecurityEngine.sanitizeInput(itemDescription, 100),
-                    amount = amount
+                    amount = cleanAmt
                 )
             )
-            statusMessageFlow.value = "Added Khata entry for $shopOrFriend"
+            statusMessageFlow.value = "Added Khata entry for $cleanShop"
         }
     }
 
     fun settleKhataEntry(entry: KhataEntryEntity) {
         if (entry.isSettled) return
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val acc = repository.accounts.first().firstOrNull()
-            repository.runInTransaction {
-                repository.updateKhataEntry(entry.copy(isSettled = true))
-                if (acc != null && entry.amount > 0.0) {
-                    repository.insertTransaction(
+            val acc = repo.accounts.first().firstOrNull()
+            repo.runInTransaction {
+                repo.updateKhataEntry(entry.copy(isSettled = true))
+                if (acc != null && isValidPositiveAmount(entry.amount)) {
+                    val cleanAmt = MoneyPaise.roundRupees(entry.amount)
+                    repo.insertTransaction(
                         TransactionEntity(
                             accountId = acc.id,
                             type = "EXPENSE",
-                            amount = entry.amount,
-                            amountPaise = MoneyPaise.toPaise(entry.amount),
+                            amount = cleanAmt,
+                            amountPaise = MoneyPaise.toPaise(cleanAmt),
                             category = "Khata & Kirana",
                             paymentMethod = "UPI",
                             note = "Cleared Khata: ${entry.shopOrFriend} (${entry.itemDescription})"
@@ -770,136 +957,256 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun deleteKhataEntry(entry: KhataEntryEntity) {
-        viewModelScope.launch(Dispatchers.IO) { repository.deleteKhataEntry(entry) }
+        val repo = requireRepo() ?: return
+        viewModelScope.launch(Dispatchers.IO) { repo.deleteKhataEntry(entry) }
     }
 
     // Budgets, Goals, Loans, Wishlist, Cashback, PPU
     fun addBudget(category: String, limit: Double) {
+        val cleanCategory = TracmioSecurityEngine.sanitizeInput(category, 60)
+        if (cleanCategory.isBlank() || !isValidPositiveAmount(limit)) {
+            statusMessageFlow.value = "Enter a valid category and positive monthly limit"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val currentMonthKey = SimpleDateFormat("yyyy-MM", Locale.US).format(Date())
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertBudget(BudgetEntity(category = category, monthlyLimit = limit, limitPaise = MoneyPaise.toPaise(limit)))
-            statusMessageFlow.value = "Saved budget for $category"
+            repo.upsertBudget(cleanCategory, limit, currentMonthKey)
+            statusMessageFlow.value = "Saved budget for $cleanCategory ($currentMonthKey)"
         }
     }
 
     fun addGoal(title: String, target: Double) {
+        val cleanTitle = TracmioSecurityEngine.sanitizeInput(title, 60)
+        if (cleanTitle.isBlank() || !isValidPositiveAmount(target)) {
+            statusMessageFlow.value = "Enter a valid goal name and positive target"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanTarget = MoneyPaise.roundRupees(target)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertGoal(GoalEntity(name = title, title = title, targetAmount = target, targetPaise = MoneyPaise.toPaise(target)))
-            statusMessageFlow.value = "Created goal: $title"
+            repo.insertGoal(
+                GoalEntity(
+                    name = cleanTitle,
+                    title = cleanTitle,
+                    targetAmount = cleanTarget,
+                    targetPaise = MoneyPaise.toPaise(cleanTarget)
+                )
+            )
+            statusMessageFlow.value = "Created goal: $cleanTitle"
         }
     }
 
     fun contributeToGoal(goal: GoalEntity, amount: Double) {
+        if (!isValidPositiveAmount(amount)) return
+        val repo = requireRepo() ?: return
+        val cleanAmt = MoneyPaise.roundRupees(amount)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.runInTransaction {
+            repo.runInTransaction {
                 val cur = if (goal.currentAmount > 0) goal.currentAmount else MoneyPaise.toRupees(goal.currentPaise)
-                val next = cur + amount
-                repository.updateGoal(goal.copy(currentAmount = next, currentPaise = MoneyPaise.toPaise(next)))
-                repository.insertGoalContribution(GoalContributionEntity(goalId = goal.id, amount = amount, note = "Manual deposit"))
+                val next = MoneyPaise.roundRupees(cur + cleanAmt)
+                repo.updateGoal(goal.copy(currentAmount = next, currentPaise = MoneyPaise.toPaise(next)))
+                repo.insertGoalContribution(
+                    GoalContributionEntity(
+                        goalId = goal.id,
+                        amount = cleanAmt,
+                        amountPaise = MoneyPaise.toPaise(cleanAmt),
+                        note = "Manual deposit"
+                    )
+                )
             }
-            statusMessageFlow.value = "Added ${settingsFlow.value.currencySymbol}${amount.toInt()} to ${goal.title.ifBlank { goal.name }}"
+            statusMessageFlow.value = "Added ${settingsFlow.value.currencySymbol}${cleanAmt.toInt()} to ${goal.title.ifBlank { goal.name }}"
         }
     }
 
     fun addLoan(name: String, principal: Double, apr: Double, monthlyEmi: Double) {
+        val cleanName = TracmioSecurityEngine.sanitizeInput(name, 60)
+        if (cleanName.isBlank() || !isValidPositiveAmount(principal) || !isValidNonNegativeAmount(apr) || !isValidPositiveAmount(monthlyEmi)) {
+            statusMessageFlow.value = "Enter valid loan name, principal, APR, and EMI"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanPrincipal = MoneyPaise.roundRupees(principal)
+        val cleanEmi = MoneyPaise.roundRupees(monthlyEmi)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertLoan(
+            repo.insertLoan(
                 LoanEntity(
-                    name = name, lender = name, principal = principal, principalPaise = MoneyPaise.toPaise(principal),
-                    interestRate = apr, monthlyPayment = monthlyEmi, emiPaise = MoneyPaise.toPaise(monthlyEmi)
+                    name = cleanName,
+                    lender = cleanName,
+                    principal = cleanPrincipal,
+                    principalPaise = MoneyPaise.toPaise(cleanPrincipal),
+                    interestRate = apr,
+                    monthlyPayment = cleanEmi,
+                    emiPaise = MoneyPaise.toPaise(cleanEmi)
                 )
             )
-            statusMessageFlow.value = "Added loan: $name"
+            statusMessageFlow.value = "Added loan: $cleanName"
         }
     }
 
     fun recordLoanRepayment(loan: LoanEntity, amount: Double) {
+        if (!isValidPositiveAmount(amount)) return
+        val repo = requireRepo() ?: return
+        val cleanAmt = MoneyPaise.roundRupees(amount)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertLoanPayment(LoanPaymentEntity(loanId = loan.id, amount = amount, amountPaise = MoneyPaise.toPaise(amount)))
+            repo.insertLoanPayment(
+                LoanPaymentEntity(
+                    loanId = loan.id,
+                    amount = cleanAmt,
+                    amountPaise = MoneyPaise.toPaise(cleanAmt)
+                )
+            )
             statusMessageFlow.value = "Recorded loan payment for ${loan.name.ifBlank { loan.lender }}"
         }
     }
 
     fun addWishlistCooldown(item: String, price: Double) {
+        val cleanItem = TracmioSecurityEngine.sanitizeInput(item, 80)
+        if (cleanItem.isBlank() || !isValidPositiveAmount(price)) {
+            statusMessageFlow.value = "Enter a valid wishlist item and price"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanPrice = MoneyPaise.roundRupees(price)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertWishlistCooldown(WishlistCooldownEntity(itemName = item, price = price))
-            statusMessageFlow.value = "Started 24h cooldown for $item"
+            repo.insertWishlistCooldown(WishlistCooldownEntity(itemName = cleanItem, price = cleanPrice))
+            statusMessageFlow.value = "Started 24h cooldown for $cleanItem"
         }
     }
 
     fun skipWishlistAndSave(item: WishlistCooldownEntity) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            repository.updateWishlistCooldown(item.copy(status = "SKIPPED_SAVED"))
+            repo.updateWishlistCooldown(item.copy(status = "SKIPPED_SAVED"))
             statusMessageFlow.value = "Skipped ${item.itemName} and saved ${settingsFlow.value.currencySymbol}${item.price.toInt()}!"
         }
     }
 
     fun addCashbackReward(app: String, amount: Double) {
+        val cleanApp = TracmioSecurityEngine.sanitizeInput(app, 60)
+        if (cleanApp.isBlank() || !isValidPositiveAmount(amount)) {
+            statusMessageFlow.value = "Enter a valid source app and cashback amount"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanAmt = MoneyPaise.roundRupees(amount)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertCashbackReward(CashbackRewardEntity(sourceApp = app, amount = amount))
-            statusMessageFlow.value = "Logged ${settingsFlow.value.currencySymbol}${amount.toInt()} cashback from $app"
+            repo.insertCashbackReward(CashbackRewardEntity(sourceApp = cleanApp, amount = cleanAmt))
+            statusMessageFlow.value = "Logged ${settingsFlow.value.currencySymbol}${cleanAmt.toInt()} cashback from $cleanApp"
         }
     }
 
     fun addPricePerUseItem(name: String, price: Double) {
+        val cleanName = TracmioSecurityEngine.sanitizeInput(name, 80)
+        if (cleanName.isBlank() || !isValidPositiveAmount(price)) {
+            statusMessageFlow.value = "Enter a valid item name and purchase price"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanPrice = MoneyPaise.roundRupees(price)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertPricePerUseItem(PricePerUseEntity(itemName = name, purchasePrice = price))
-            statusMessageFlow.value = "Tracking value for $name"
+            repo.insertPricePerUseItem(PricePerUseEntity(itemName = cleanName, purchasePrice = cleanPrice))
+            statusMessageFlow.value = "Tracking value for $cleanName"
         }
     }
 
     fun incrementItemUse(item: PricePerUseEntity) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            repository.updatePricePerUseItem(item.copy(usageCount = item.usageCount + 1))
+            repo.updatePricePerUseItem(item.copy(usageCount = item.usageCount + 1))
         }
     }
 
     // Subscriptions, Academic, Reminders, Trackers
     fun addSubscription(name: String, amount: Double, cycle: String, isSim: Boolean = false, validityDays: Int = 28) {
+        val cleanName = TracmioSecurityEngine.sanitizeInput(name, 80)
+        if (cleanName.isBlank() || !isValidPositiveAmount(amount) || validityDays <= 0) {
+            statusMessageFlow.value = "Enter a valid subscription name, amount, and validity days"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanAmt = MoneyPaise.roundRupees(amount)
         viewModelScope.launch(Dispatchers.IO) {
             val due = System.currentTimeMillis() + (validityDays.toLong() * 86_400_000L)
-            repository.insertSubscription(
+            repo.insertSubscription(
                 SubscriptionEntity(
-                    name = name, amount = amount, billingCycle = cycle, nextDueDateMillis = due,
-                    isSimOrWifi = isSim, validityDays = validityDays
+                    name = cleanName,
+                    amount = cleanAmt,
+                    amountPaise = MoneyPaise.toPaise(cleanAmt),
+                    billingCycle = cycle,
+                    nextDueDateMillis = due,
+                    isSimOrWifi = isSim,
+                    validityDays = validityDays
                 )
             )
-            statusMessageFlow.value = "Added $name"
+            statusMessageFlow.value = "Added $cleanName"
         }
     }
 
     fun deleteSubscription(sub: SubscriptionEntity) {
-        viewModelScope.launch(Dispatchers.IO) { repository.deleteSubscription(sub) }
+        val repo = requireRepo() ?: return
+        viewModelScope.launch(Dispatchers.IO) { repo.deleteSubscription(sub) }
     }
 
     fun addAcademicEvent(title: String, fee: Double, dueDate: String, semester: String) {
+        val cleanTitle = TracmioSecurityEngine.sanitizeInput(title, 80)
+        if (cleanTitle.isBlank() || !isValidNonNegativeAmount(fee)) {
+            statusMessageFlow.value = "Enter a valid academic event title and fee"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanFee = MoneyPaise.roundRupees(fee)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertAcademicEvent(AcademicEventEntity(title = title, feeAmount = fee, dueDate = dueDate, semester = semester))
-            statusMessageFlow.value = "Added academic event: $title"
+            repo.insertAcademicEvent(
+                AcademicEventEntity(
+                    title = cleanTitle,
+                    feeAmount = cleanFee,
+                    dueDate = TracmioSecurityEngine.sanitizeInput(dueDate, 30),
+                    semester = TracmioSecurityEngine.sanitizeInput(semester, 30)
+                )
+            )
+            statusMessageFlow.value = "Added academic event: $cleanTitle"
         }
     }
 
     fun markAcademicEventPaid(event: AcademicEventEntity) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            repository.updateAcademicEvent(event.copy(isPaid = true, paidAmount = event.feeAmount))
+            repo.updateAcademicEvent(event.copy(isPaid = true, paidAmount = event.feeAmount))
             statusMessageFlow.value = "Marked ${event.title} paid"
         }
     }
 
     fun addReminder(title: String, amount: Double, dueDate: String) {
+        val cleanTitle = TracmioSecurityEngine.sanitizeInput(title, 80)
+        if (cleanTitle.isBlank() || !isValidNonNegativeAmount(amount)) {
+            statusMessageFlow.value = "Enter a valid reminder title and amount"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanAmt = MoneyPaise.roundRupees(amount)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertReminder(ReminderItemEntity(title = title, amount = amount, dueDate = dueDate))
-            statusMessageFlow.value = "Added reminder: $title"
+            repo.insertReminder(
+                ReminderItemEntity(
+                    title = cleanTitle,
+                    amount = cleanAmt,
+                    dueDate = TracmioSecurityEngine.sanitizeInput(dueDate, 30)
+                )
+            )
+            statusMessageFlow.value = "Added reminder: $cleanTitle"
         }
     }
 
     fun toggleReminderCompleted(rem: ReminderItemEntity) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            repository.updateReminder(rem.copy(isCompleted = !rem.isCompleted))
+            repo.updateReminder(rem.copy(isCompleted = !rem.isCompleted))
         }
     }
 
     fun deleteReminder(rem: ReminderItemEntity) {
-        viewModelScope.launch(Dispatchers.IO) { repository.deleteReminder(rem) }
+        val repo = requireRepo() ?: return
+        viewModelScope.launch(Dispatchers.IO) { repo.deleteReminder(rem) }
     }
 
     fun setDailyReminderEnabled(enabled: Boolean) {
@@ -913,155 +1220,382 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun addCustomTracker(title: String, type: String, target: Double) {
+        val cleanTitle = TracmioSecurityEngine.sanitizeInput(title, 60)
+        if (cleanTitle.isBlank() || !isValidPositiveAmount(target)) {
+            statusMessageFlow.value = "Enter a valid tracker title and positive target"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanTarget = MoneyPaise.roundRupees(target)
         viewModelScope.launch(Dispatchers.IO) {
-            repository.insertCustomTracker(
+            repo.insertCustomTracker(
                 CustomTrackerEntity(
-                    title = title, trackerType = type, targetValue = target,
+                    title = cleanTitle,
+                    trackerType = type,
+                    targetValue = cleanTarget,
                     unit = if (type == "SAVINGS") settingsFlow.value.currencySymbol else "pts"
                 )
             )
-            statusMessageFlow.value = "Started tracker: $title"
+            statusMessageFlow.value = "Started tracker: $cleanTitle"
         }
     }
 
     fun incrementCustomTracker(tracker: CustomTrackerEntity, delta: Double) {
+        if (!delta.isFinite() || delta == 0.0) return
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val entry = CustomTrackerEntryEntity(trackerId = tracker.id, deltaValue = delta)
-            repository.runInTransaction {
-                repository.insertTrackerEntry(entry)
-                repository.updateCustomTracker(CustomTrackersCalculator.applyEntryDelta(tracker, entry))
+            repo.runInTransaction {
+                repo.insertTrackerEntry(entry)
+                repo.updateCustomTracker(CustomTrackersCalculator.applyEntryDelta(tracker, entry))
             }
         }
     }
 
     fun deleteCustomTracker(tracker: CustomTrackerEntity) {
-        viewModelScope.launch(Dispatchers.IO) { repository.deleteCustomTracker(tracker) }
+        val repo = requireRepo() ?: return
+        viewModelScope.launch(Dispatchers.IO) { repo.deleteCustomTracker(tracker) }
     }
 
     fun addTrackerFolder(folderName: String, icon: String) {
-        viewModelScope.launch(Dispatchers.IO) { repository.insertTrackerFolder(TrackerFolderEntity(folderName = folderName, icon = icon)) }
+        val cleanName = TracmioSecurityEngine.sanitizeInput(folderName, 40)
+        if (cleanName.isBlank()) return
+        val repo = requireRepo() ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            repo.insertTrackerFolder(TrackerFolderEntity(folderName = cleanName, icon = icon))
+        }
     }
 
     fun deleteTrackerFolder(folder: TrackerFolderEntity) {
-        viewModelScope.launch(Dispatchers.IO) { repository.deleteTrackerFolder(folder) }
+        val repo = requireRepo() ?: return
+        viewModelScope.launch(Dispatchers.IO) { repo.deleteTrackerFolder(folder) }
     }
 
     // App Lock & Security Audit
-    fun enableAppLock(pin: String, biometric: Boolean, question: String, answer: String): String {
-        val recoveryKey = appLockManager.enableLock(pin, biometric, question, answer)
+    fun refreshAppLockState() {
         appLockStateFlow.value = appLockManager.getState()
-        statusMessageFlow.value = "App Lock enabled. Save recovery key: $recoveryKey"
-        return recoveryKey
+    }
+
+    fun enableAppLock(pin: String, biometric: Boolean, question: String, answer: String): String {
+        return runCatching {
+            val recoveryKey = appLockManager.enableLock(pin, biometric, question, answer)
+            appLockStateFlow.value = appLockManager.getState()
+            statusMessageFlow.value = "App Lock enabled. Store your recovery key safely."
+            recoveryKey
+        }.getOrElse { err ->
+            appLockStateFlow.value = appLockManager.getState()
+            statusMessageFlow.value = err.localizedMessage ?: "Unable to enable App Lock"
+            ""
+        }
+    }
+
+    fun verifyCurrentPinForSensitiveAction(pin: String): Boolean {
+        val ok = appLockManager.verifyPin(pin)
+        appLockStateFlow.value = appLockManager.getState()
+        return ok
     }
 
     fun disableAppLock() {
-        appLockManager.disableLock()
-        appLockStateFlow.value = appLockManager.getState()
-        isAppLockedFlow.value = false
-        statusMessageFlow.value = "App Lock disabled"
+        runCatching {
+            appLockManager.disableLock()
+            appLockStateFlow.value = appLockManager.getState()
+            isAppLockedFlow.value = false
+            statusMessageFlow.value = "App Lock disabled"
+        }.onFailure { err ->
+            appLockStateFlow.value = appLockManager.getState()
+            statusMessageFlow.value = err.localizedMessage ?: "Failed to disable App Lock"
+        }
     }
 
     fun unlockWithPin(pin: String): Boolean {
         val ok = appLockManager.verifyPin(pin)
+        appLockStateFlow.value = appLockManager.getState()
         if (ok) isAppLockedFlow.value = false
         return ok
     }
 
-    fun unlockWithBiometricSuccess() { isAppLockedFlow.value = false }
+    fun unlockWithBiometricSuccess() {
+        appLockManager.resetLockoutOnBiometricSuccess()
+        appLockStateFlow.value = appLockManager.getState()
+        isAppLockedFlow.value = false
+    }
 
     fun recoverPinWithSecret(secret: String, newPin: String?): Boolean {
-        val ok = appLockManager.verifyRecoveryAndReset(secret, newPin)
-        if (ok) {
+        return runCatching {
+            val ok = appLockManager.verifyRecoveryAndReset(secret, newPin)
             appLockStateFlow.value = appLockManager.getState()
-            isAppLockedFlow.value = false
-            statusMessageFlow.value = if (newPin.isNullOrBlank()) "App Lock reset & unlocked" else "PIN updated & unlocked"
+            if (ok) {
+                isAppLockedFlow.value = false
+                statusMessageFlow.value = if (newPin.isNullOrBlank()) "App Lock reset & unlocked" else "PIN updated & unlocked"
+            }
+            ok
+        }.getOrElse { err ->
+            statusMessageFlow.value = err.localizedMessage ?: "Recovery failed"
+            false
         }
-        return ok
     }
 
     fun runDatabaseHealthReport(): TracmioSecurityEngine.DatabaseHealthReport {
+        val repo = repositoryFlow.value
+        if (repo == null) {
+            return TracmioSecurityEngine.DatabaseHealthReport(
+                isHealthy = false,
+                pragmaIntegrity = "vault_locked",
+                foreignKeyErrors = 0,
+                accountCount = 0,
+                transactionCount = 0,
+                trackerCount = 0,
+                orphanedTransactions = 0,
+                diagnosticSummary = "Encrypted vault is unavailable or locked."
+            )
+        }
         val st = uiState.value
-        return repository.runDatabaseHealthCheck(st.accounts.size, st.transactions.size, st.customTrackers.size)
+        return repo.runDatabaseHealthCheck(st.accounts.size, st.transactions.size, st.customTrackers.size)
     }
 
-    fun buildBackupJson(): String = NativeBackupService.buildFullBackupJson(uiState.value, settingsFlow.value)
-
-    fun importBackupJsonText(rawText: String, password: CharArray? = null) {
+    fun repairDatabaseOrphans(onComplete: (TracmioSecurityEngine.DatabaseHealthReport) -> Unit) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val plain = runCatching {
-                if (password != null && rawText.contains("\"cipherText\"")) {
-                    TracmioSecurityEngine.decryptBackup(rawText, password)
-                } else {
-                    rawText
+            val repaired = runCatching { repo.repairOrphanRecords() }.getOrDefault(0)
+            val st = uiState.value
+            val refreshed = repo.runDatabaseHealthCheck(st.accounts.size, st.transactions.size, st.customTrackers.size)
+            statusMessageFlow.value = if (repaired > 0) {
+                "Repaired $repaired orphan/UID records"
+            } else {
+                "No orphan records needed repair"
+            }
+            withContext(Dispatchers.Main) {
+                onComplete(refreshed)
+            }
+        }
+    }
+
+    fun buildBackupJson(): String {
+        return NativeBackupService.buildFullBackupJson(
+            state = uiState.value,
+            settings = settingsFlow.value,
+            appFilesDir = appContext.filesDir,
+            categories = categoriesFlow.value
+        )
+    }
+
+    fun prepareBackupPreview(rawText: String, password: CharArray? = null) {
+        val passCopy = password?.copyOf()
+        val repo = requireRepo()
+        if (repo == null) {
+            passCopy?.fill('\u0000')
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val isEncrypted = rawText.contains("\"cipherText\"")
+                if (isEncrypted && (passCopy == null || passCopy.isEmpty())) {
+                    statusMessageFlow.value = "This backup is encrypted. Use 'Import Encrypted' and enter your password."
+                    return@launch
                 }
-            }.getOrElse {
-                statusMessageFlow.value = "Import failed: wrong password or corrupted backup"
+                val plain = runCatching {
+                    if (isEncrypted && passCopy != null) {
+                        TracmioSecurityEngine.decryptBackup(rawText, passCopy)
+                    } else {
+                        rawText
+                    }
+                }.getOrElse {
+                    statusMessageFlow.value = "Backup decrypt failed: wrong password or corrupted envelope"
+                    return@launch
+                }
+
+                val preview = runCatching { repo.inspectBackupPayload(plain) }.getOrElse { err ->
+                    statusMessageFlow.value = err.localizedMessage ?: "Invalid backup JSON format"
+                    return@launch
+                }
+                pendingBackupPreviewFlow.value = PendingBackupPreview(plainJson = plain, report = preview)
+            } finally {
+                passCopy?.fill('\u0000')
+            }
+        }
+    }
+
+    fun dismissBackupPreview() {
+        pendingBackupPreviewFlow.value = null
+    }
+
+    fun confirmBackupRestore(mode: FinanceRepository.BackupRestoreMode) {
+        val pending = pendingBackupPreviewFlow.value ?: return
+        val repo = requireRepo() ?: return
+        pendingBackupPreviewFlow.value = null
+        viewModelScope.launch(Dispatchers.IO) {
+            val report = runCatching {
+                repo.restoreBackupJson(
+                    jsonText = pending.plainJson,
+                    mode = mode,
+                    appFilesDir = appContext.filesDir
+                )
+            }.getOrElse { err ->
+                statusMessageFlow.value = "Restore failed: ${err.localizedMessage ?: "invalid payload"}"
                 return@launch
             }
-            val count = runCatching { repository.importBackupJson(plain) }.getOrDefault(0)
-            runCatching {
-                val obj = org.json.JSONObject(plain)
-                obj.optJSONObject("appPreferences")?.let { p ->
-                    prefsStore.updateSettings { cur ->
-                        cur.copy(
-                            userName = TracmioSecurityEngine.sanitizeInput(p.optString("userName", cur.userName), 40).ifBlank { cur.userName },
-                            currencySymbol = TracmioSecurityEngine.sanitizeInput(p.optString("currencySymbol", cur.currencySymbol), 6).ifBlank { cur.currencySymbol },
-                            themePreset = p.optString("themePreset", cur.themePreset),
-                            glassUiStyle = p.optString("glassUiStyle", cur.glassUiStyle),
-                            wallpaperPreset = p.optString("wallpaperPreset", cur.wallpaperPreset),
-                            backgroundVisibility = p.optDouble("backgroundVisibility", cur.backgroundVisibility.toDouble()).toFloat().coerceIn(0.05f, 1.0f),
-                            glowIntensity = p.optDouble("glowIntensity", cur.glowIntensity.toDouble()).toFloat().coerceIn(0.1f, 1.2f),
-                            uiScale = p.optDouble("uiScale", cur.uiScale.toDouble()).toFloat().coerceIn(0.8f, 1.3f),
-                            roundUpEnabled = p.optBoolean("roundUpEnabled", cur.roundUpEnabled)
-                        )
+            applyPreferencesFromBackupJson(pending.plainJson, report.restoredAttachmentMap)
+            lastRestoreReportFlow.value = report
+            statusMessageFlow.value = report.details
+        }
+    }
+
+    fun importBackupJsonText(rawText: String, password: CharArray? = null) {
+        val passCopy = password?.copyOf()
+        val repo = requireRepo()
+        if (repo == null) {
+            passCopy?.fill('\u0000')
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val plain = runCatching {
+                    if (passCopy != null && rawText.contains("\"cipherText\"")) {
+                        TracmioSecurityEngine.decryptBackup(rawText, passCopy)
+                    } else {
+                        rawText
                     }
+                }.getOrElse {
+                    statusMessageFlow.value = "Import failed: wrong password or corrupted backup"
+                    return@launch
                 }
-                obj.optJSONArray("quickSpendChips")?.let { arr ->
-                    val chips = (0 until arr.length()).map { idx ->
-                        val c = arr.getJSONObject(idx)
-                        QuickSpendChip(
-                            id = c.optString("id", "q_$idx"),
-                            emoji = c.optString("emoji", "⚡"),
-                            title = TracmioSecurityEngine.sanitizeInput(c.optString("title", "Spend"), 30),
-                            amount = c.optDouble("amount", 0.0),
-                            category = TracmioSecurityEngine.sanitizeInput(c.optString("category", "Other"), 40)
-                        )
-                    }.filter { it.amount > 0.0 }
-                    if (chips.isNotEmpty()) {
-                        quickChipsFlow.value = chips
-                        prefsStore.saveQuickSpendChips(chips)
-                    }
+                val report = runCatching {
+                    repo.restoreBackupJson(
+                        jsonText = plain,
+                        mode = FinanceRepository.BackupRestoreMode.SAFE_MERGE,
+                        appFilesDir = appContext.filesDir
+                    )
+                }.getOrElse { err ->
+                    statusMessageFlow.value = "Import failed: ${err.localizedMessage ?: "invalid backup"}"
+                    return@launch
                 }
-                obj.optJSONArray("pendingRefunds")?.let { arr ->
-                    val refs = (0 until arr.length()).map { idx ->
-                        val r = arr.getJSONObject(idx)
-                        PendingRefundItem(
-                            id = r.optString("id", "ref_$idx"),
-                            title = TracmioSecurityEngine.sanitizeInput(r.optString("title", "Refund"), 80),
-                            source = TracmioSecurityEngine.sanitizeInput(r.optString("source", "Store / App"), 50),
-                            amount = r.optDouble("amount", 0.0),
-                            expectedDate = TracmioSecurityEngine.sanitizeInput(r.optString("expectedDate", "Soon"), 30),
-                            isReceived = r.optBoolean("isReceived", false)
-                        )
-                    }
-                    pendingRefundsFlow.value = refs
-                    prefsStore.savePendingRefunds(refs)
+                applyPreferencesFromBackupJson(plain, report.restoredAttachmentMap)
+                lastRestoreReportFlow.value = report
+                statusMessageFlow.value = report.details
+            } finally {
+                passCopy?.fill('\u0000')
+            }
+        }
+    }
+
+    fun importLegacyJsonText(rawText: String) {
+        val repo = requireRepo() ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val report = runCatching {
+                LegacyMigrationGuard.importLegacyJsonSnapshotToRepo(rawText, repo)
+            }.getOrElse { err ->
+                statusMessageFlow.value = "Legacy JSON import failed: ${err.localizedMessage}"
+                return@launch
+            }
+            lastRestoreReportFlow.value = report
+            statusMessageFlow.value = "Legacy JSON imported: ${report.details}"
+        }
+    }
+
+    fun importLegacyDatabaseUri(uri: Uri) {
+        val repo = requireRepo() ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val report = runCatching {
+                LegacyMigrationGuard.importLegacySqliteDbUri(appContext, uri, repo)
+            }.getOrElse { err ->
+                statusMessageFlow.value = "Legacy DB import failed: ${err.localizedMessage}"
+                return@launch
+            }
+            lastRestoreReportFlow.value = report
+            statusMessageFlow.value = "Legacy DB imported: ${report.details}"
+        }
+    }
+
+    private fun applyPreferencesFromBackupJson(plain: String, attachmentMap: Map<String, String>) {
+        runCatching {
+            val obj = JSONObject(plain)
+            obj.optJSONObject("appPreferences")?.let { p ->
+                val rawWallpaperPath = if (p.has("customWallpaperPath") && !p.isNull("customWallpaperPath")) {
+                    p.optString("customWallpaperPath", "").takeIf { it.isNotBlank() }
+                } else null
+                val mappedWallpaper = rawWallpaperPath?.let { attachmentMap[it] ?: it }
+                val rootCanon = appContext.filesDir.canonicalPath
+                val validatedWallpaper = mappedWallpaper?.let { candidate ->
+                    runCatching {
+                        val f = File(candidate)
+                        val canon = f.canonicalPath
+                        if (f.exists() && f.isFile && canon.startsWith(rootCanon + File.separator)) canon else null
+                    }.getOrNull()
                 }
-                obj.optJSONArray("pinnedToolIds")?.let { arr ->
-                    val pins = (0 until arr.length()).map { arr.getString(it) }
-                    pinnedToolIdsFlow.value = pins
-                    prefsStore.savePinnedToolIds(pins)
+
+                prefsStore.updateSettings { cur ->
+                    cur.copy(
+                        userName = TracmioSecurityEngine.sanitizeInput(p.optString("userName", cur.userName), 40).ifBlank { cur.userName },
+                        currencySymbol = TracmioSecurityEngine.sanitizeInput(p.optString("currencySymbol", cur.currencySymbol), 6).ifBlank { cur.currencySymbol },
+                        themePreset = p.optString("themePreset", cur.themePreset),
+                        glassUiStyle = p.optString("glassUiStyle", cur.glassUiStyle),
+                        wallpaperPreset = p.optString("wallpaperPreset", cur.wallpaperPreset),
+                        backgroundVisibility = p.optDouble("backgroundVisibility", cur.backgroundVisibility.toDouble()).toFloat().coerceIn(0.05f, 1.0f),
+                        wallpaperBlurDp = p.optDouble("wallpaperBlurDp", cur.wallpaperBlurDp.toDouble()).toFloat().coerceIn(0f, 30f),
+                        glowIntensity = p.optDouble("glowIntensity", cur.glowIntensity.toDouble()).toFloat().coerceIn(0.1f, 1.2f),
+                        uiScale = p.optDouble("uiScale", cur.uiScale.toDouble()).toFloat().coerceIn(0.8f, 1.3f),
+                        deviceMotionEnabled = p.optBoolean("deviceMotionEnabled", cur.deviceMotionEnabled),
+                        animationStyle = p.optInt("animationStyle", cur.animationStyle),
+                        customPrimaryHex = TracmioSecurityEngine.sanitizeInput(p.optString("customPrimaryHex", cur.customPrimaryHex), 16).ifBlank { cur.customPrimaryHex },
+                        customSecondaryHex = TracmioSecurityEngine.sanitizeInput(p.optString("customSecondaryHex", cur.customSecondaryHex), 16).ifBlank { cur.customSecondaryHex },
+                        customWallpaperPath = validatedWallpaper ?: cur.customWallpaperPath,
+                        roundUpEnabled = p.optBoolean("roundUpEnabled", cur.roundUpEnabled)
+                    )
+                }
+                if (p.has("dailyReminderEnabled")) {
+                    setDailyReminderEnabled(p.optBoolean("dailyReminderEnabled", false))
+                }
+                if (p.has("monthlyBackupEnabled")) {
+                    setMonthlyBackupEnabled(p.optBoolean("monthlyBackupEnabled", false))
                 }
             }
-            statusMessageFlow.value = "Imported $count records safely into offline vault"
+            obj.optJSONArray("quickSpendChips")?.let { arr ->
+                val chips = (0 until arr.length()).map { idx ->
+                    val c = arr.getJSONObject(idx)
+                    QuickSpendChip(
+                        id = c.optString("id", "q_$idx"),
+                        emoji = c.optString("emoji", "⚡"),
+                        title = TracmioSecurityEngine.sanitizeInput(c.optString("title", "Spend"), 30),
+                        amount = c.optDouble("amount", 0.0),
+                        category = TracmioSecurityEngine.sanitizeInput(c.optString("category", "Other"), 40)
+                    )
+                }.filter { it.amount.isFinite() && it.amount > 0.0 }
+                if (chips.isNotEmpty()) {
+                    quickChipsFlow.value = chips
+                    prefsStore.saveQuickSpendChips(chips)
+                }
+            }
+            obj.optJSONArray("pendingRefunds")?.let { arr ->
+                val refs = (0 until arr.length()).map { idx ->
+                    val r = arr.getJSONObject(idx)
+                    PendingRefundItem(
+                        id = r.optString("id", "ref_$idx"),
+                        title = TracmioSecurityEngine.sanitizeInput(r.optString("title", "Refund"), 80),
+                        source = TracmioSecurityEngine.sanitizeInput(r.optString("source", "Store / App"), 50),
+                        amount = r.optDouble("amount", 0.0),
+                        expectedDate = TracmioSecurityEngine.sanitizeInput(r.optString("expectedDate", "Soon"), 30),
+                        isReceived = r.optBoolean("isReceived", false)
+                    )
+                }.filter { it.amount.isFinite() && it.amount > 0.0 }
+                pendingRefundsFlow.value = refs
+                prefsStore.savePendingRefunds(refs)
+            }
+            obj.optJSONArray("pinnedToolIds")?.let { arr ->
+                val pins = (0 until arr.length()).map { arr.getString(it) }
+                pinnedToolIdsFlow.value = pins
+                prefsStore.savePinnedToolIds(pins)
+            }
         }
     }
 
     fun importCsvText(csvText: String) {
+        val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val defaultAccId = repository.accounts.first().firstOrNull()?.id ?: 1L
+            val defaultAccId = repo.accounts.first().firstOrNull()?.id ?: 1L
             val parsed = CsvParser.parseCsvTransactions(csvText, defaultAccId)
-            parsed.forEach { repository.insertTransaction(it) }
+            repo.runInTransaction {
+                parsed.forEach { repo.insertTransaction(it) }
+            }
             statusMessageFlow.value = "Imported ${parsed.size} CSV transactions"
         }
     }
@@ -1107,6 +1641,7 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     )
 
     private data class AuxFlagsSnapshot(
+        val vaultInitState: TracmioSecurityEngine.VaultInitState,
         val pinnedToolIds: List<String>,
         val pendingNotificationAction: String?,
         val dailyReminderEnabled: Boolean,
