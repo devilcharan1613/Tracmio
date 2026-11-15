@@ -27,6 +27,7 @@ fun TrackersAndTimeMachineScreens(
     settings: LiquidGlassSettings,
     palette: ThemePalette,
     viewModel: NativeTracmioViewModel,
+    onBack: (() -> Unit)? = null,
     onSelectSubRoute: (String) -> Unit
 ) {
     val curr = settings.currencySymbol
@@ -36,9 +37,11 @@ fun TrackersAndTimeMachineScreens(
     var selectedType by remember { mutableStateOf("SAVINGS") }
 
     // Time Machine Simulator state
+    var timeMachineMode by remember { mutableStateOf("FUTURE") } // FUTURE, PAST, COMPARE
     var monthlySaveSim by remember { mutableStateOf("5000") }
     var yearsSim by remember { mutableStateOf("5") }
     var annualReturnPct by remember { mutableStateOf("12") }
+    var pastDaysAgoText by remember { mutableStateOf("30") }
 
     val summary = remember(state.customTrackers) {
         CustomTrackersCalculator.summarizeTrackers(state.customTrackers)
@@ -50,16 +53,28 @@ fun TrackersAndTimeMachineScreens(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (onBack != null) {
+                    OutlinedButton(
+                        onClick = onBack,
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text("← Back", color = palette.primary, fontWeight = FontWeight.ExtraBold)
+                    }
+                }
                 listOf("custom_trackers" to "🎯 Custom Trackers & Challenges", "time_machine" to "⏳ Financial Time Machine").forEach { (key, label) ->
                     val sel = subRoute == key
                     Box(
                         modifier = Modifier
-                            .weight(1f)
                             .clip(RoundedCornerShape(16.dp))
                             .background(if (sel) palette.primary else palette.surface)
+                            .border(1.dp, if (sel) palette.primary else palette.surfaceBorder, RoundedCornerShape(16.dp))
                             .clickable { onSelectSubRoute(key) }
-                            .padding(vertical = 10.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(label, color = if (sel) palette.background else palette.textPrimary, fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.labelSmall)
@@ -70,27 +85,92 @@ fun TrackersAndTimeMachineScreens(
 
         if (subRoute == "time_machine") {
             item {
-                val monthly = monthlySaveSim.toDoubleOrNull() ?: 5000.0
-                val years = (yearsSim.toIntOrNull() ?: 5).coerceIn(1, 40)
-                val rate = (annualReturnPct.toDoubleOrNull() ?: 12.0) / 100.0 / 12.0
-                val months = years * 12
-                val futureVal = if (rate > 0) {
-                    monthly * ((Math.pow(1.0 + rate, months.toDouble()) - 1.0) / rate) * (1.0 + rate)
-                } else {
-                    monthly * months
-                }
-                val invested = monthly * months
-
                 LiquidGlassComponents(settings = settings, palette = palette) {
                     Text("⏳ Financial Time Machine Simulator", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = palette.primary)
-                    Text("Project compound wealth if daily habits or SIPs continue:", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(value = monthlySaveSim, onValueChange = { monthlySaveSim = it }, label = { Text("Monthly ($curr)") }, singleLine = true, modifier = Modifier.weight(1f))
-                        OutlinedTextField(value = yearsSim, onValueChange = { yearsSim = it }, label = { Text("Years") }, singleLine = true, modifier = Modifier.weight(1f))
-                        OutlinedTextField(value = annualReturnPct, onValueChange = { annualReturnPct = it }, label = { Text("Return %") }, singleLine = true, modifier = Modifier.weight(1f))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("FUTURE" to "🚀 Future Wealth", "PAST" to "🕰️ Past Lookup", "COMPARE" to "⚖️ Compare Months").forEach { (mode, label) ->
+                            val sel = timeMachineMode == mode
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (sel) palette.primary.copy(alpha = 0.22f) else palette.surface)
+                                    .border(1.dp, if (sel) palette.primary else palette.surfaceBorder, RoundedCornerShape(12.dp))
+                                    .clickable { timeMachineMode = mode }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(label, style = MaterialTheme.typography.labelSmall, color = if (sel) palette.primary else palette.textPrimary, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
-                    Text("Projected Future Wealth: $curr${"%,.0f".format(futureVal)}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = palette.primary)
-                    Text("Total Principal Invested: $curr${"%,.0f".format(invested)} · Compound Gain: $curr${"%,.0f".format(futureVal - invested)}", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+
+                    when (timeMachineMode) {
+                        "PAST" -> {
+                            val daysAgo = (pastDaysAgoText.toIntOrNull() ?: 30).coerceIn(1, 3650)
+                            val cutoffMs = System.currentTimeMillis() - (daysAgo.toLong() * 86_400_000L)
+                            val pastTxns = state.transactions.filter { it.timestamp <= cutoffMs }
+                            val pastNet = state.accounts.sumOf { acc -> FinancialCalculator.balance(acc, pastTxns) }
+                            val txnsSince = state.transactions.count { it.timestamp > cutoffMs }
+                            Text("Inspect your historical ledger snapshot $daysAgo days ago:", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                            OutlinedTextField(
+                                value = pastDaysAgoText,
+                                onValueChange = { pastDaysAgoText = it },
+                                label = { Text("Days Ago (e.g. 7, 30, 90, 365)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text("Historical Balance ($daysAgo days ago): $curr${"%,.0f".format(pastNet)}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                            Text("$txnsSince transactions logged since that date", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                        }
+                        "COMPARE" -> {
+                            val now = System.currentTimeMillis()
+                            val thirtyDaysMs = 30L * 86_400_000L
+                            val thisMonthTx = state.transactions.filter { it.timestamp >= now - thirtyDaysMs }
+                            val prevMonthTx = state.transactions.filter { it.timestamp in (now - 2 * thirtyDaysMs) until (now - thirtyDaysMs) }
+                            val thisExp = thisMonthTx.filter { it.type.equals("EXPENSE", true) }.sumOf { it.amount }
+                            val prevExp = prevMonthTx.filter { it.type.equals("EXPENSE", true) }.sumOf { it.amount }
+                            val thisInc = thisMonthTx.filter { it.type.equals("INCOME", true) }.sumOf { it.amount }
+                            val prevInc = prevMonthTx.filter { it.type.equals("INCOME", true) }.sumOf { it.amount }
+                            Text("Side-by-side Last 30 Days vs Previous 30 Days:", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).padding(12.dp)) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("Last 30 Days", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, fontWeight = FontWeight.Bold)
+                                        Text("In: $curr${"%,.0f".format(thisInc)}", color = Color(0xFF34D399), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                        Text("Out: $curr${"%,.0f".format(thisExp)}", color = Color(0xFFFB7185), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                                Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).padding(12.dp)) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("Prev 30 Days", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, fontWeight = FontWeight.Bold)
+                                        Text("In: $curr${"%,.0f".format(prevInc)}", color = Color(0xFF34D399), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                        Text("Out: $curr${"%,.0f".format(prevExp)}", color = Color(0xFFFB7185), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        }
+                        else -> {
+                            val monthly = monthlySaveSim.toDoubleOrNull() ?: 5000.0
+                            val years = (yearsSim.toIntOrNull() ?: 5).coerceIn(1, 40)
+                            val rate = (annualReturnPct.toDoubleOrNull() ?: 12.0) / 100.0 / 12.0
+                            val months = years * 12
+                            val futureVal = if (rate > 0) {
+                                monthly * ((Math.pow(1.0 + rate, months.toDouble()) - 1.0) / rate) * (1.0 + rate)
+                            } else {
+                                monthly * months
+                            }
+                            val invested = monthly * months
+                            Text("Project compound wealth if daily habits or SIPs continue:", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(value = monthlySaveSim, onValueChange = { monthlySaveSim = it }, label = { Text("Monthly ($curr)") }, singleLine = true, modifier = Modifier.weight(1f))
+                                OutlinedTextField(value = yearsSim, onValueChange = { yearsSim = it }, label = { Text("Years") }, singleLine = true, modifier = Modifier.weight(1f))
+                                OutlinedTextField(value = annualReturnPct, onValueChange = { annualReturnPct = it }, label = { Text("Return %") }, singleLine = true, modifier = Modifier.weight(1f))
+                            }
+                            Text("Projected Future Wealth: $curr${"%,.0f".format(futureVal)}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                            Text("Total Principal Invested: $curr${"%,.0f".format(invested)} · Compound Gain: $curr${"%,.0f".format(futureVal - invested)}", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                        }
+                    }
                 }
             }
         } else {

@@ -221,39 +221,66 @@ fun TransactionsListScreen(
                 }
             }
         } else {
-            items(filteredList, key = { it.id }) { tx ->
-                val isIncome = tx.type.equals("INCOME", true) || tx.type.equals("BORROW", true)
-                val dateFormatted = remember(tx.timestamp) {
-                    SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(tx.timestamp))
-                }
-                GlassCard(
-                    settings = settings,
-                    onClick = { onOpenReceipt(tx) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+            val groupedByDay = filteredList.groupBy { tx ->
+                SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(tx.timestamp))
+            }
+            groupedByDay.forEach { (dayLabel, dayTxns) ->
+                item(key = "header_$dayLabel") {
+                    val dayNet = dayTxns.sumOf { tx ->
+                        val isInc = tx.type.equals("INCOME", true) || tx.type.equals("BORROW", true) || tx.type.equals("TRANSFER_IN", true)
+                        if (isInc) tx.amount else -tx.amount
+                    }
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(tx.category, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
-                                if (tx.subcategory.isNotBlank()) {
-                                    Text("· ${tx.subcategory}", style = MaterialTheme.typography.labelSmall, color = palette.primary)
+                        Text(dayLabel, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                        Text(
+                            (if (dayNet >= 0) "+" else "-") + MoneyPaise.formatCurrency(kotlin.math.abs(dayNet), curr, stealth, mask),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (dayNet >= 0) Color(0xFF34D399) else Color(0xFFFB7185)
+                        )
+                    }
+                }
+                items(dayTxns, key = { it.id }) { tx ->
+                    val isIncome = tx.type.equals("INCOME", true) || tx.type.equals("BORROW", true) || tx.type.equals("TRANSFER_IN", true)
+                    val dateFormatted = remember(tx.timestamp) {
+                        SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(tx.timestamp))
+                    }
+                    GlassCard(
+                        settings = settings,
+                        onClick = { onOpenReceipt(tx) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(tx.category, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+                                    if (tx.subcategory.isNotBlank()) {
+                                        Text("· ${tx.subcategory}", style = MaterialTheme.typography.labelSmall, color = palette.primary)
+                                    }
+                                    if (!tx.attachmentUri.isNullOrBlank()) {
+                                        Text("📎", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                                Text("$dateFormatted · ${tx.paymentMethod}", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                                if (tx.note.isNotBlank()) {
+                                    Text(tx.note, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
                                 }
                             }
-                            Text("$dateFormatted · ${tx.paymentMethod}", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
-                            if (tx.note.isNotBlank()) {
-                                Text(tx.note, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
-                            }
+                            Text(
+                                (if (isIncome) "+" else "-") + MoneyPaise.formatCurrency(tx.amount, curr, stealth, mask),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (isIncome) palette.primary else Color(0xFFFB7185)
+                            )
                         }
-                        Text(
-                            (if (isIncome) "+" else "-") + MoneyPaise.formatCurrency(tx.amount, curr, stealth, mask),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (isIncome) palette.primary else Color(0xFFFB7185)
-                        )
                     }
                 }
             }
@@ -290,6 +317,7 @@ fun AddEditTransactionSheet(
     viewModel: NativeTracmioViewModel,
     editingTransaction: TransactionEntity? = null,
     initialType: String = "EXPENSE",
+    hostCallbacks: NativeHostCallbacks? = null,
     onDismiss: () -> Unit
 ) {
     val curr = settings.currencySymbol
@@ -309,10 +337,13 @@ fun AddEditTransactionSheet(
     var subcategory by remember { mutableStateOf(editingTransaction?.subcategory ?: "") }
     var paymentMethod by remember { mutableStateOf(editingTransaction?.paymentMethod ?: "UPI") }
     var upiApp by remember { mutableStateOf(editingTransaction?.upiApp ?: "GPay") }
+    var showCustomUpiInput by remember { mutableStateOf(false) }
     var incomeSource by remember { mutableStateOf("💼 Own Earnings / Freelance") }
+    var selectedPersonName by remember { mutableStateOf("") }
     var noteText by remember { mutableStateOf(editingTransaction?.note ?: "") }
     var warrantyDate by remember { mutableStateOf(editingTransaction?.warrantyDate ?: "") }
     var selectedAllocationId by remember { mutableStateOf(editingTransaction?.allocationId ?: "") }
+    var attachmentUri by remember { mutableStateOf(editingTransaction?.attachmentUri) }
 
     // Half-Cash + Half-UPI Split state
     var cashPortionText by remember { mutableStateOf("") }
@@ -345,6 +376,7 @@ fun AddEditTransactionSheet(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .navigationBarsPadding()
                     .imePadding()
                     .padding(horizontal = 20.dp, vertical = 16.dp)
                     .verticalScroll(rememberScrollState()),
@@ -580,21 +612,71 @@ fun AddEditTransactionSheet(
                     }
                 }
 
+                if (txType.equals("BORROW", true) || txType.equals("LEND", true)) {
+                    Text("Person / Split Contact", style = MaterialTheme.typography.labelMedium, color = palette.primary)
+                    if (state.persons.isNotEmpty()) {
+                        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            state.persons.forEach { p ->
+                                val sel = selectedPersonName == p.name
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (sel) palette.primary.copy(alpha = 0.25f) else palette.surface)
+                                        .border(1.dp, if (sel) palette.primary else palette.surfaceBorder, RoundedCornerShape(10.dp))
+                                        .clickable { selectedPersonName = if (sel) "" else p.name }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text("👤 ${p.name}", style = MaterialTheme.typography.labelSmall, color = if (sel) palette.primary else palette.textPrimary, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = selectedPersonName,
+                        onValueChange = { selectedPersonName = it },
+                        label = { Text("Person Name (for Borrow / Lend)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
                 if (paymentMethod == "UPI") {
                     Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("GPay", "PhonePe", "Paytm", "BHIM", "CRED", "Amazon Pay").forEach { app ->
-                            val sel = upiApp == app
+                            val sel = upiApp == app && !showCustomUpiInput
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(if (sel) palette.primary.copy(alpha = 0.25f) else palette.surface)
                                     .border(1.dp, if (sel) palette.primary else palette.surfaceBorder, RoundedCornerShape(10.dp))
-                                    .clickable { upiApp = app }
+                                    .clickable {
+                                        showCustomUpiInput = false
+                                        upiApp = app
+                                    }
                                     .padding(horizontal = 10.dp, vertical = 6.dp)
                             ) {
                                 Text(app, style = MaterialTheme.typography.labelSmall, color = if (sel) palette.primary else palette.textPrimary, fontWeight = FontWeight.Bold)
                             }
                         }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (showCustomUpiInput) palette.primary.copy(alpha = 0.25f) else palette.surface)
+                                .border(1.dp, if (showCustomUpiInput) palette.primary else palette.surfaceBorder, RoundedCornerShape(10.dp))
+                                .clickable { showCustomUpiInput = !showCustomUpiInput }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text("+ Custom UPI", style = MaterialTheme.typography.labelSmall, color = palette.primary, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (showCustomUpiInput) {
+                        OutlinedTextField(
+                            value = upiApp,
+                            onValueChange = { upiApp = it },
+                            label = { Text("Custom UPI App Name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
 
@@ -632,6 +714,32 @@ fun AddEditTransactionSheet(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                if (hostCallbacks != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = { hostCallbacks.pickTrackerAttachment { _, _, localPath, _ -> attachmentUri = localPath } },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("🖼️ Attach Photo", color = palette.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(
+                            onClick = { hostCallbacks.captureReceiptPhoto { _, _, localPath, _ -> attachmentUri = localPath } },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("📷 Camera Receipt", color = palette.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (!attachmentUri.isNullOrBlank()) {
+                        Text("📎 Receipt Photo Attached", style = MaterialTheme.typography.labelSmall, color = Color(0xFF34D399), fontWeight = FontWeight.Bold)
+                    }
+                }
+
                 Button(
                     onClick = {
                         if (isSubmitting) return@Button
@@ -657,7 +765,11 @@ fun AddEditTransactionSheet(
                             isSubmitting = true
                             val finalCat = if (selectedCategory == "Select Category") "Other" else selectedCategory
                             val finalSubcat = subcategory.trim().ifBlank {
-                                if (txType.equals("INCOME", true)) incomeSource else ""
+                                when {
+                                    txType.equals("INCOME", true) -> incomeSource
+                                    selectedPersonName.isNotBlank() -> "Person: ${selectedPersonName.trim()}"
+                                    else -> ""
+                                }
                             }
                             viewModel.saveTransaction(
                                 editingId = editingTransaction?.id,
@@ -672,7 +784,8 @@ fun AddEditTransactionSheet(
                                 warrantyDate = warrantyDate.trim(),
                                 allocationId = selectedAllocationId,
                                 cashPortion = cashPortionText.toDoubleOrNull() ?: 0.0,
-                                upiPortion = upiPortionText.toDoubleOrNull() ?: 0.0
+                                upiPortion = upiPortionText.toDoubleOrNull() ?: 0.0,
+                                attachmentUri = attachmentUri
                             )
                             onDismiss()
                         }

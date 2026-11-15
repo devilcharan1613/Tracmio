@@ -25,6 +25,7 @@ fun AccountEditDialog(
     initialAccount: AccountEntity? = null,
     palette: ThemePalette,
     onDismiss: () -> Unit,
+    onDelete: (() -> Unit)? = null,
     onSave: (name: String, accountType: String, balance: Double, creditLimit: Double, statementDay: Int, dueDay: Int) -> Unit
 ) {
     var name by remember { mutableStateOf(initialAccount?.name ?: "") }
@@ -123,6 +124,15 @@ fun AccountEditDialog(
                             singleLine = true,
                             modifier = Modifier.weight(1f)
                         )
+                    }
+                }
+                if (initialAccount != null && onDelete != null) {
+                    OutlinedButton(
+                        onClick = onDelete,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("🗑️ Delete Account", color = androidx.compose.ui.graphics.Color(0xFFFB7185), fontWeight = FontWeight.Bold)
                     }
                 }
             }

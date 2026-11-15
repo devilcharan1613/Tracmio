@@ -344,4 +344,21 @@ class TracmioAuditRemediationRobolectricTest {
         assertTrue(sheet1Xml.contains("&apos;=CMD"))
         assertFalse(sheet1Xml.contains("<t>=CMD"))
     }
+
+    @Test
+    fun all24ToolsCatalogAndThemeSafeBorderStylesAreComplete() {
+        val catalog = com.tracmio.app.ui.nativeapp.ALL_TOOLS_CATALOG
+        assertEquals(24, catalog.size)
+        assertEquals(24, catalog.map { it.id }.distinct().size)
+        assertTrue(catalog.all { it.route.isNotBlank() && it.title.isNotBlank() && it.subtitle.isNotBlank() })
+
+        val themes = com.tracmio.app.ui.nativeapp.ThemePresets.ALL_THEMES
+        assertEquals(11, themes.size)
+        val customPalette = com.tracmio.app.ui.nativeapp.ThemePresets.getPalette("custom", "#10B981", "#38BDF8")
+        assertEquals("custom", customPalette.id)
+
+        val glassStyles = com.tracmio.app.ui.nativeapp.ThemePresets.GLASS_UI_STYLES
+        assertEquals(10, glassStyles.size)
+        assertEquals((1..10).map { "ui$it" }, glassStyles.map { it.first })
+    }
 }

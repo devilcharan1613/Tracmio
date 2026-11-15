@@ -31,14 +31,30 @@ fun PlanningAndPeopleScreens(
     palette: ThemePalette,
     viewModel: NativeTracmioViewModel,
     hostCallbacks: NativeHostCallbacks,
+    onBack: (() -> Unit)? = null,
     onSelectSubRoute: (String) -> Unit
 ) {
-    val curr = settings.currencySymbol
+    val activeGroup = when (subRoute) {
+        "people", "khata" -> "people"
+        "budgets", "planning", "runway" -> "budgets"
+        "goals", "wishlist", "cashback", "price_per_use", "round_up" -> "goals"
+        "loans", "debt_planner" -> "loans"
+        else -> "budgets"
+    }
     val tabs = listOf(
         "people" to "👥 People & Khata",
         "budgets" to "📊 Budgets & Runway",
-        "goals" to "🎯 Savings Goals",
+        "goals" to "🎯 Goals, Wishlist & Rewards",
         "loans" to "🏦 Loans & Debt Payoff"
+    )
+    val subToolPills = listOf(
+        "khata" to "📓 Khata",
+        "runway" to "🛟 Runway",
+        "round_up" to "🪙 Round-Up",
+        "wishlist" to "🧊 24h Wishlist",
+        "cashback" to "🎁 Cashback",
+        "price_per_use" to "🧮 Price/Use",
+        "debt_planner" to "📉 Debt Payoff"
     )
 
     LazyColumn(
@@ -47,27 +63,56 @@ fun PlanningAndPeopleScreens(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                tabs.forEach { (routeKey, label) ->
-                    val sel = subRoute == routeKey
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (sel) palette.primary else palette.surface)
-                            .border(1.dp, if (sel) palette.primary else palette.surfaceBorder, RoundedCornerShape(16.dp))
-                            .clickable { onSelectSubRoute(routeKey) }
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
-                    ) {
-                        Text(label, color = if (sel) palette.background else palette.textPrimary, fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.labelMedium)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (onBack != null) {
+                        OutlinedButton(
+                            onClick = onBack,
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text("← Back", color = palette.primary, fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                    tabs.forEach { (routeKey, label) ->
+                        val sel = activeGroup == routeKey
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (sel) palette.primary else palette.surface)
+                                .border(1.dp, if (sel) palette.primary else palette.surfaceBorder, RoundedCornerShape(16.dp))
+                                .clickable { onSelectSubRoute(routeKey) }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text(label, color = if (sel) palette.background else palette.textPrimary, fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    subToolPills.forEach { (pillRoute, pillLabel) ->
+                        val isExact = subRoute == pillRoute
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isExact) palette.primary.copy(alpha = 0.24f) else palette.surfaceElevated.copy(alpha = 0.7f))
+                                .border(1.dp, if (isExact) palette.primary else palette.surfaceBorder, RoundedCornerShape(12.dp))
+                                .clickable { onSelectSubRoute(pillRoute) }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(pillLabel, color = if (isExact) palette.primary else palette.textSecondary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
             }
         }
 
-        when (subRoute) {
+        when (activeGroup) {
             "people" -> {
                 item {
                     PeopleAndKhataSection(state = state, settings = settings, palette = palette, viewModel = viewModel, hostCallbacks = hostCallbacks)
@@ -518,21 +563,38 @@ private fun GoalsAndCoolingSection(
                 Text("+ Start 24h Cooldown", color = palette.background, fontWeight = FontWeight.ExtraBold)
             }
             state.wishlistCooldowns.forEach { w ->
+                val remainingMs = ((w.createdAtMillis + 86_400_000L) - System.currentTimeMillis()).coerceAtLeast(0L)
+                val hoursLeft = (remainingMs / 3_600_000L).toInt()
+                val cooldownLabel = if (w.status == "COOLING") {
+                    if (remainingMs > 0L) "⏳ ${hoursLeft}h left in 24h cooldown" else "✅ 24h Cooldown Complete"
+                } else {
+                    w.status
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(palette.surface).padding(10.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(w.itemName, fontWeight = FontWeight.Bold, color = palette.textPrimary)
-                        Text("$curr${"%,.0f".format(w.price)} · ${w.status}", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                        Text("$curr${"%,.0f".format(w.price)} · $cooldownLabel", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
                     }
                     if (w.status == "COOLING") {
-                        Button(
-                            onClick = { viewModel.skipWishlistAndSave(w) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
-                        ) {
-                            Text("✓ Skip & Save", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Button(
+                                onClick = { viewModel.skipWishlistAndSave(w) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text("✓ Skip & Save", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.buyWishlistItemNow(w) },
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text("🛒 Buy", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            }
                         }
                     }
                 }

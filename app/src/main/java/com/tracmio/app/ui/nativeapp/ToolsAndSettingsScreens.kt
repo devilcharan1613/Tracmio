@@ -265,11 +265,20 @@ fun SubscriptionsAndAcademicScreen(
                 val daysLeft = ((sub.nextDueDateMillis - System.currentTimeMillis()) / 86_400_000L).coerceAtLeast(0L)
                 LiquidGlassComponents(settings = settings, palette = palette) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(sub.name, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
                             Text("$curr${"%,.0f".format(sub.amount)} · ${sub.billingCycle} · ${daysLeft}d remaining", style = MaterialTheme.typography.labelSmall, color = palette.primary)
                         }
-                        Text("✕", color = Color(0xFFFB7185), modifier = Modifier.clickable { viewModel.deleteSubscription(sub) }.padding(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Button(
+                                onClick = { viewModel.paySubscriptionNow(sub) },
+                                colors = ButtonDefaults.buttonColors(containerColor = palette.surfaceElevated),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text("⚡ Pay & Log", color = palette.primary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                            }
+                            Text("✕", color = Color(0xFFFB7185), modifier = Modifier.clickable { viewModel.deleteSubscription(sub) }.padding(6.dp))
+                        }
                     }
                 }
             }
@@ -1189,6 +1198,7 @@ fun AppLockOverlayScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.background.copy(alpha = 0.96f))
+            .systemBarsPadding()
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -1484,7 +1494,7 @@ fun StandaloneCashCounterScreen(
         mutableLongStateOf(preferredAccounts.firstOrNull()?.id ?: 0L)
     }
     val cashAccount = state.accounts.firstOrNull { it.id == selectedAccountId } ?: preferredAccounts.firstOrNull()
-    Box(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    Box(modifier = Modifier.fillMaxSize().systemBarsPadding().padding(16.dp)) {
         if (cashAccount == null) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(onClick = onBack) { Text("← Back", color = palette.primary) }

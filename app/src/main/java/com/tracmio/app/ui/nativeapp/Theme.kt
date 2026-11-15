@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -259,6 +260,24 @@ object ThemePresets {
             textSecondary = Color(0xFFBAE0F5),
             meshGlow1 = Color(0xFF22D3EE),
             meshGlow2 = Color(0xFF0284C7)
+        ),
+        ThemePalette(
+            id = "custom",
+            displayName = "Custom Neon",
+            isLight = false,
+            primary = Color(0xFF00F5D4),
+            secondary = Color(0xFFA855F7),
+            tertiary = Color(0xFF38BDF8),
+            background = Color(0xFF061621),
+            backgroundMid = Color(0xFF0A2434),
+            backgroundBottom = Color(0xFF040F17),
+            surface = Color(0xC70E2E42),
+            surfaceElevated = Color(0xE0143D56),
+            surfaceBorder = Color(0x5500F5D4),
+            textPrimary = Color(0xFFFFFFFF),
+            textSecondary = Color(0xFFC2E2EE),
+            meshGlow1 = Color(0xFF00F5D4),
+            meshGlow2 = Color(0xFFA855F7)
         )
     )
 
@@ -288,8 +307,29 @@ object ThemePresets {
         "ui10" to "High Contrast Pro"
     )
 
+    private fun parseHexColorOrDefault(hex: String, fallback: Color): Color {
+        val cleaned = hex.trim().removePrefix("#")
+        if (cleaned.length != 6 && cleaned.length != 8) return fallback
+        return runCatching {
+            val value = cleaned.toLong(16)
+            if (cleaned.length == 6) Color(0xFF000000L or value) else Color(value)
+        }.getOrDefault(fallback)
+    }
+
     fun getPalette(preset: String, primaryHex: String = "#00F5D4", secondaryHex: String = "#A855F7"): ThemePalette {
-        return ALL_THEMES.firstOrNull { it.id == preset } ?: ALL_THEMES.first()
+        val base = ALL_THEMES.firstOrNull { it.id == preset } ?: ALL_THEMES.first()
+        if (preset == "custom") {
+            val p = parseHexColorOrDefault(primaryHex, base.primary)
+            val s = parseHexColorOrDefault(secondaryHex, base.secondary)
+            return base.copy(
+                primary = p,
+                secondary = s,
+                surfaceBorder = p.copy(alpha = 0.42f),
+                meshGlow1 = p,
+                meshGlow2 = s
+            )
+        }
+        return base
     }
 }
 
@@ -353,35 +393,75 @@ fun TracmioNativeTheme(
 fun GlassCard(
     settings: LiquidGlassSettings,
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(22.dp),
+    shape: Shape? = null,
     backgroundColor: Color? = null,
     borderColor: Color? = null,
-    borderWidth: Dp = 1.4.dp,
+    borderWidth: Dp? = null,
     onClick: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
-    val palette = ThemePresets.getPalette(settings.themePreset)
+    val palette = ThemePresets.getPalette(settings.themePreset, settings.customPrimaryHex, settings.customSecondaryHex)
+    val styleId = settings.glassUiStyle
+    val resolvedShape: Shape = shape ?: when (styleId) {
+        "ui6" -> RoundedCornerShape(26.dp)
+        "ui7" -> RoundedCornerShape(16.dp)
+        "ui9" -> RoundedCornerShape(30.dp)
+        else -> RoundedCornerShape(22.dp)
+    }
+    val resolvedBorderWidth: Dp = borderWidth ?: when (styleId) {
+        "ui3" -> 2.0.dp
+        "ui7" -> 1.0.dp
+        "ui8" -> 1.8.dp
+        "ui10" -> 2.2.dp
+        else -> 1.4.dp
+    }
+    val alphaFactor = when (styleId) {
+        "ui2" -> 0.72f
+        "ui4" -> 0.96f
+        "ui5" -> 0.94f
+        "ui7" -> 0.65f
+        "ui10" -> 0.98f
+        else -> 0.88f
+    }
+
     val bgBrush = if (backgroundColor != null) {
         Brush.verticalGradient(listOf(backgroundColor, backgroundColor.copy(alpha = (backgroundColor.alpha * 0.92f))))
     } else if (palette.isLight) {
         Brush.verticalGradient(listOf(palette.surfaceElevated, palette.surface))
-    } else if (palette.id == "dark") {
+    } else if (palette.id == "dark" && styleId == "ui1") {
         Brush.verticalGradient(listOf(Color(0xC70F3A4E), Color(0xB8092B3C)))
     } else {
-        Brush.verticalGradient(listOf(palette.surfaceElevated.copy(alpha = 0.88f), palette.surface.copy(alpha = 0.80f)))
+        Brush.verticalGradient(
+            listOf(
+                palette.surfaceElevated.copy(alpha = alphaFactor),
+                palette.surface.copy(alpha = (alphaFactor * 0.90f).coerceIn(0.4f, 0.98f))
+            )
+        )
     }
 
     val strokeBrush = if (borderColor != null) {
-        Brush.verticalGradient(listOf(borderColor.copy(alpha = 0.75f), borderColor))
+        Brush.verticalGradient(listOf(borderColor.copy(alpha = 0.85f), borderColor))
     } else {
-        Brush.verticalGradient(listOf(Color(0x29FFFFFF), palette.surfaceBorder))
+        when (styleId) {
+            "ui3" -> Brush.linearGradient(listOf(palette.primary, palette.secondary, palette.primary.copy(alpha = 0.65f)))
+            "ui8" -> Brush.verticalGradient(listOf(Color(0x88FFFFFF), palette.primary.copy(alpha = 0.65f), Color(0x44FFFFFF)))
+            "ui10" -> Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.9f), palette.primary))
+            else -> Brush.verticalGradient(listOf(Color(0x38FFFFFF), palette.surfaceBorder))
+        }
     }
 
     Box(
         modifier = modifier
-            .clip(shape)
+            .clip(resolvedShape)
             .background(bgBrush)
-            .border(width = borderWidth, brush = strokeBrush, shape = shape)
+            .border(width = resolvedBorderWidth, brush = strokeBrush, shape = resolvedShape)
+            .then(
+                if (styleId == "ui8") {
+                    Modifier.padding(2.dp).border(0.8.dp, Color.White.copy(alpha = 0.22f), resolvedShape)
+                } else {
+                    Modifier
+                }
+            )
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
     ) {
         content()

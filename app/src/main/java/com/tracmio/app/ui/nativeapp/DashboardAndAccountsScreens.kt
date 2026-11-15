@@ -347,6 +347,204 @@ fun DashboardScreen(
                 }
             }
         }
+
+        // 5. 2x2 Quick Intelligence Grid (Runway, Goals, Subscriptions, No-Spend Streak)
+        item {
+            val runwaySummary = remember(state.accounts, state.transactions) {
+                NativeLedgerCalculator.computeEmergencyRunway(state.accounts, state.transactions, 3)
+            }
+            val streakDays = remember(state.transactions) {
+                NativeIntelligenceCalculators.computeNoSpendStreakDays(state.transactions)
+            }
+            val activeGoalsCount = state.goals.size
+            val activeSubsCount = state.subscriptions.size
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    GlassCard(
+                        settings = settings,
+                        onClick = { onNavigate("runway") },
+                        modifier = Modifier.weight(1f).fillMaxHeight().testTag("dashboard_quick_runway")
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("🛟 Emergency Runway", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, fontWeight = FontWeight.Bold)
+                            Text(
+                                "${"%.1f".format(runwaySummary.months)} mos",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = palette.primary
+                            )
+                            Text(
+                                if (runwaySummary.months >= 6.0) "Fortress Ready" else "3-mo rolling avg",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = palette.textSecondary
+                            )
+                        }
+                    }
+                    GlassCard(
+                        settings = settings,
+                        onClick = { onNavigate("goals") },
+                        modifier = Modifier.weight(1f).fillMaxHeight().testTag("dashboard_quick_goals")
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("🎯 Savings Goals", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, fontWeight = FontWeight.Bold)
+                            Text(
+                                "$activeGoalsCount Active",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFF34D399)
+                            )
+                            Text(
+                                if (settings.roundUpEnabled) "🪙 Round-Up Jar ON" else "Tap to manage goals",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = palette.textSecondary
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    GlassCard(
+                        settings = settings,
+                        onClick = { onNavigate("subscriptions") },
+                        modifier = Modifier.weight(1f).fillMaxHeight().testTag("dashboard_quick_subscriptions")
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("🔁 Subscriptions & SIM", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, fontWeight = FontWeight.Bold)
+                            Text(
+                                "$activeSubsCount Tracked",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFFA855F7)
+                            )
+                            Text("Recurring & 28/84d SIM", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                        }
+                    }
+                    GlassCard(
+                        settings = settings,
+                        onClick = { onNavigate("calendar") },
+                        modifier = Modifier.weight(1f).fillMaxHeight().testTag("dashboard_quick_streak")
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("🔥 No-Spend Streak", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, fontWeight = FontWeight.Bold)
+                            Text(
+                                "$streakDays Days",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFFFBBF24)
+                            )
+                            Text(
+                                if (streakDays >= 7) "🔥 7d+ Streak" else "Zero-spend days",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = palette.textSecondary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. Opt-In Paste SMS / UPI Quick-Log Card (Zero SMS Permission Required)
+        item {
+            var smsPasteText by remember { mutableStateOf("") }
+            LiquidGlassComponents(settings = settings, palette = palette, modifier = Modifier.testTag("dashboard_sms_quick_log")) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("📩", fontSize = 16.sp)
+                        Column {
+                            Text("PASTE UPI / BANK ALERT QUICK-LOG", style = MaterialTheme.typography.labelMedium, color = palette.primary, fontWeight = FontWeight.ExtraBold)
+                            Text("100% offline parser · Zero SMS permission required", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = smsPasteText,
+                        onValueChange = { smsPasteText = it },
+                        label = { Text("Paste e.g. 'Rs. 240 debited via UPI to Swiggy'") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f).testTag("sms_paste_input")
+                    )
+                    Button(
+                        onClick = {
+                            if (viewModel.parseAndLogSmsAlert(smsPasteText)) {
+                                smsPasteText = ""
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.testTag("sms_parse_button")
+                    ) {
+                        Text("⚡ Log", color = palette.background, fontWeight = FontWeight.ExtraBold)
+                    }
+                }
+            }
+        }
+
+        // 7. Recent Transactions Preview Card
+        item {
+            val recentTxns = remember(state.transactions) {
+                state.transactions.sortedByDescending { it.timestamp }.take(5)
+            }
+            LiquidGlassComponents(settings = settings, palette = palette, modifier = Modifier.testTag("dashboard_recent_transactions")) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("🧾 RECENT TRANSACTIONS", style = MaterialTheme.typography.labelMedium, color = palette.textSecondary, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.8.sp)
+                    Text(
+                        "See All →",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.primary,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.clickable { onNavigate("transactions") }.testTag("dashboard_see_all_transactions")
+                    )
+                }
+                if (recentTxns.isEmpty()) {
+                    Text("No transactions yet. Tap + Add or a 1-Tap Chip above.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                } else {
+                    recentTxns.forEach { tx ->
+                        val isInc = tx.type.equals("INCOME", true) || tx.type.equals("TRANSFER_IN", true) || tx.type.equals("BORROW", true)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(palette.surfaceElevated.copy(alpha = 0.55f))
+                                .clickable { onOpenTransactionReceipt(tx) }
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(tx.category, fontWeight = FontWeight.Bold, color = palette.textPrimary, style = MaterialTheme.typography.bodyMedium)
+                                if (tx.note.isNotBlank()) {
+                                    Text(tx.note, style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, maxLines = 1)
+                                }
+                            }
+                            Text(
+                                (if (isInc) "+" else "-") + MoneyPaise.formatCurrency(tx.amount, curr, stealth, mask),
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (isInc) Color(0xFF34D399) else Color(0xFFFB7185)
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (showAddChipDialog) {
@@ -399,6 +597,8 @@ fun AccountsScreen(
     var allocatingAccount by remember { mutableStateOf<AccountEntity?>(null) }
     var cashCountingAccount by remember { mutableStateOf<AccountEntity?>(null) }
     var reconcilingAccount by remember { mutableStateOf<AccountEntity?>(null) }
+    var quickActionAccount by remember { mutableStateOf<Pair<AccountEntity, Boolean>?>(null) }
+    var transferringFromAccount by remember { mutableStateOf<AccountEntity?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("accounts_list"),
@@ -512,6 +712,17 @@ fun AccountsScreen(
                 }
 
                 Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { quickActionAccount = acc to true }, shape = RoundedCornerShape(12.dp)) {
+                        Text("＋ Deposit", color = Color(0xFF34D399), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(onClick = { quickActionAccount = acc to false }, shape = RoundedCornerShape(12.dp)) {
+                        Text("－ Withdraw", color = Color(0xFFFB7185), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+                    if (state.accounts.size > 1) {
+                        OutlinedButton(onClick = { transferringFromAccount = acc }, shape = RoundedCornerShape(12.dp)) {
+                            Text("⇄ Transfer", color = palette.primary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
+                    }
                     OutlinedButton(onClick = { allocatingAccount = acc }, shape = RoundedCornerShape(12.dp)) {
                         Text("📂 Allocate", color = palette.primary, style = MaterialTheme.typography.labelSmall)
                     }
@@ -532,17 +743,111 @@ fun AccountsScreen(
     }
 
     if (showCreateAccount || editingAccount != null) {
+        val currentEditing = editingAccount
         AccountEditDialog(
-            initialAccount = editingAccount,
+            initialAccount = currentEditing,
             palette = palette,
             onDismiss = {
                 showCreateAccount = false
                 editingAccount = null
             },
+            onDelete = if (currentEditing != null && state.accounts.size > 1) {
+                {
+                    viewModel.deleteAccount(currentEditing)
+                    showCreateAccount = false
+                    editingAccount = null
+                }
+            } else null,
             onSave = { name, type, bal, limit, stmt, due ->
-                viewModel.saveAccount(editingAccount?.id, name, type, bal, limit, stmt, due)
+                viewModel.saveAccount(currentEditing?.id, name, type, bal, limit, stmt, due)
                 showCreateAccount = false
                 editingAccount = null
+            }
+        )
+    }
+
+    quickActionAccount?.let { (acc, isDeposit) ->
+        var amtText by remember { mutableStateOf("") }
+        var noteText by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { quickActionAccount = null },
+            containerColor = palette.surfaceElevated,
+            title = {
+                Text(
+                    if (isDeposit) "＋ Quick Deposit to ${acc.name}" else "－ Quick Withdraw from ${acc.name}",
+                    fontWeight = FontWeight.ExtraBold,
+                    color = palette.textPrimary
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = amtText, onValueChange = { amtText = it }, label = { Text("Amount ($curr)") }, singleLine = true)
+                    OutlinedTextField(value = noteText, onValueChange = { noteText = it }, label = { Text("Note (optional)") }, singleLine = true)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val amt = amtText.toDoubleOrNull() ?: 0.0
+                        if (amt > 0.0) {
+                            viewModel.quickAccountDepositOrWithdraw(acc.id, isDeposit, amt, noteText)
+                            quickActionAccount = null
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
+                ) { Text(if (isDeposit) "Deposit" else "Withdraw", color = palette.background, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { quickActionAccount = null }) { Text("Cancel", color = palette.textSecondary) }
+            }
+        )
+    }
+
+    transferringFromAccount?.let { fromAcc ->
+        val destinations = state.accounts.filter { it.id != fromAcc.id }
+        var targetId by remember(destinations) { mutableLongStateOf(destinations.firstOrNull()?.id ?: 0L) }
+        var amtText by remember { mutableStateOf("") }
+        var noteText by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { transferringFromAccount = null },
+            containerColor = palette.surfaceElevated,
+            title = { Text("⇄ Transfer from ${fromAcc.name}", fontWeight = FontWeight.ExtraBold, color = palette.textPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Select Destination Account:", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                    Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        destinations.forEach { dest ->
+                            val sel = dest.id == targetId
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (sel) palette.primary.copy(alpha = 0.22f) else palette.surface)
+                                    .border(1.dp, if (sel) palette.primary else palette.surfaceBorder, RoundedCornerShape(10.dp))
+                                    .clickable { targetId = dest.id }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(dest.name, style = MaterialTheme.typography.labelSmall, color = if (sel) palette.primary else palette.textPrimary, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    OutlinedTextField(value = amtText, onValueChange = { amtText = it }, label = { Text("Amount ($curr)") }, singleLine = true)
+                    OutlinedTextField(value = noteText, onValueChange = { noteText = it }, label = { Text("Note (optional)") }, singleLine = true)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val amt = amtText.toDoubleOrNull() ?: 0.0
+                        if (amt > 0.0 && targetId != 0L) {
+                            viewModel.transferFunds(fromAcc.id, targetId, amt, noteText.ifBlank { "Account Transfer" })
+                            transferringFromAccount = null
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
+                ) { Text("Transfer", color = palette.background, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { transferringFromAccount = null }) { Text("Cancel", color = palette.textSecondary) }
             }
         )
     }

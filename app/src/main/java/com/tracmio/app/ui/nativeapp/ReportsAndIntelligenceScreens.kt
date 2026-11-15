@@ -37,6 +37,7 @@ fun ReportsAndIntelligenceScreens(
     settings: LiquidGlassSettings,
     palette: ThemePalette,
     viewModel: NativeTracmioViewModel,
+    onBack: (() -> Unit)? = null,
     onSelectSubRoute: (String) -> Unit
 ) {
     val curr = settings.currencySymbol
@@ -56,8 +57,17 @@ fun ReportsAndIntelligenceScreens(
         item {
             Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                if (onBack != null) {
+                    OutlinedButton(
+                        onClick = onBack,
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text("← Back", color = palette.primary, fontWeight = FontWeight.ExtraBold)
+                    }
+                }
                 tabs.forEach { (routeKey, label) ->
                     val sel = subRoute == routeKey
                     Box(
@@ -158,30 +168,73 @@ fun ReportsAndIntelligenceScreens(
                     val split = remember(state.transactions) {
                         NativeIntelligenceCalculators.compute503020Breakdown(state.transactions)
                     }
-                    LiquidGlassComponents(settings = settings, palette = palette) {
-                        Text(
-                            "🧬 50/30/20 Spending DNA Breakdown",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = palette.primary
-                        )
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).padding(12.dp)) {
-                                Column {
-                                    Text("50% Needs", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
-                                    Text("$curr${"%,.0f".format(split.needs)}", fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+                    val weekdayAmounts = remember(state.transactions) {
+                        val labels = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+                        val map = mutableMapOf<Int, Double>()
+                        val cal = Calendar.getInstance()
+                        state.transactions.filter { it.type.equals("EXPENSE", true) }.forEach { tx ->
+                            cal.timeInMillis = tx.timestamp
+                            val dow = when (cal.get(Calendar.DAY_OF_WEEK)) {
+                                Calendar.MONDAY -> 0
+                                Calendar.TUESDAY -> 1
+                                Calendar.WEDNESDAY -> 2
+                                Calendar.THURSDAY -> 3
+                                Calendar.FRIDAY -> 4
+                                Calendar.SATURDAY -> 5
+                                else -> 6
+                            }
+                            map[dow] = (map[dow] ?: 0.0) + tx.amount
+                        }
+                        labels.mapIndexed { idx, lbl -> lbl to (map[idx] ?: 0.0) }
+                    }
+                    val maxWeekday = weekdayAmounts.maxOfOrNull { it.second }?.coerceAtLeast(1.0) ?: 1.0
+
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        LiquidGlassComponents(settings = settings, palette = palette) {
+                            Text(
+                                "🧬 50/30/20 Spending DNA Breakdown",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = palette.primary
+                            )
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).padding(12.dp)) {
+                                    Column {
+                                        Text("50% Needs", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                                        Text("$curr${"%,.0f".format(split.needs)}", fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+                                    }
+                                }
+                                Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).padding(12.dp)) {
+                                    Column {
+                                        Text("30% Wants", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                                        Text("$curr${"%,.0f".format(split.wants)}", fontWeight = FontWeight.ExtraBold, color = Color(0xFFFB7185))
+                                    }
+                                }
+                                Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).padding(12.dp)) {
+                                    Column {
+                                        Text("20% Savings", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                                        Text("$curr${"%,.0f".format(split.savings)}", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                                    }
                                 }
                             }
-                            Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).padding(12.dp)) {
-                                Column {
-                                    Text("30% Wants", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
-                                    Text("$curr${"%,.0f".format(split.wants)}", fontWeight = FontWeight.ExtraBold, color = Color(0xFFFB7185))
-                                }
-                            }
-                            Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(palette.surface).padding(12.dp)) {
-                                Column {
-                                    Text("20% Savings", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
-                                    Text("$curr${"%,.0f".format(split.savings)}", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                        }
+
+                        LiquidGlassComponents(settings = settings, palette = palette) {
+                            Text("📊 Mon–Sun Day-of-Week Spend Rhythm", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                            weekdayAmounts.forEach { (dayLabel, amt) ->
+                                val ratio = (amt / maxWeekday).toFloat().coerceIn(0.04f, 1f)
+                                val isWeekend = dayLabel == "Sat" || dayLabel == "Sun"
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(dayLabel, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = if (isWeekend) Color(0xFFFBBF24) else palette.textPrimary)
+                                        Text("$curr${"%,.0f".format(amt)}", style = MaterialTheme.typography.labelSmall, color = palette.primary, fontWeight = FontWeight.Bold)
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = { ratio },
+                                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(4.dp)),
+                                        color = if (isWeekend) Color(0xFFFBBF24) else palette.primary,
+                                        trackColor = palette.surface
+                                    )
                                 }
                             }
                         }
@@ -195,6 +248,22 @@ fun ReportsAndIntelligenceScreens(
                     var simDays by remember { mutableStateOf("28") }
                     val streakDays = remember(state.transactions) {
                         NativeIntelligenceCalculators.computeNoSpendStreakDays(state.transactions)
+                    }
+                    val (daysInMonth, dailySpendMap) = remember(state.transactions) {
+                        val nowCal = Calendar.getInstance()
+                        val curY = nowCal.get(Calendar.YEAR)
+                        val curM = nowCal.get(Calendar.MONTH)
+                        val maxDays = nowCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                        val map = mutableMapOf<Int, Double>()
+                        val txCal = Calendar.getInstance()
+                        state.transactions.filter { it.type.equals("EXPENSE", true) }.forEach { tx ->
+                            txCal.timeInMillis = tx.timestamp
+                            if (txCal.get(Calendar.YEAR) == curY && txCal.get(Calendar.MONTH) == curM) {
+                                val d = txCal.get(Calendar.DAY_OF_MONTH)
+                                map[d] = (map[d] ?: 0.0) + tx.amount
+                            }
+                        }
+                        maxDays to map
                     }
 
                     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -226,6 +295,47 @@ fun ReportsAndIntelligenceScreens(
                                             color = if (unlocked) palette.primary else palette.textSecondary,
                                             fontWeight = FontWeight.Bold
                                         )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Monthly 7-Column Calendar Day Grid
+                        LiquidGlassComponents(settings = settings, palette = palette) {
+                            Text("📅 Monthly Spend & No-Spend Day Grid", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                            Text("🟢 Zero-Spend Day   🔴 Expense Logged", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                            val daysList = (1..daysInMonth).toList()
+                            daysList.chunked(7).forEach { week ->
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    week.forEach { dayNum ->
+                                        val spent = dailySpendMap[dayNum] ?: 0.0
+                                        val isNoSpend = spent <= 0.0
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (isNoSpend) Color(0xFF064E3B).copy(alpha = 0.45f) else Color(0xFF7F1D1D).copy(alpha = 0.45f))
+                                                .border(
+                                                    1.dp,
+                                                    if (isNoSpend) Color(0xFF10B981).copy(alpha = 0.55f) else Color(0xFFFB7185).copy(alpha = 0.55f),
+                                                    RoundedCornerShape(8.dp)
+                                                )
+                                                .padding(vertical = 6.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text("$dayNum", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(5.dp)
+                                                        .clip(CircleShape)
+                                                        .background(if (isNoSpend) Color(0xFF34D399) else Color(0xFFFB7185))
+                                                )
+                                            }
+                                        }
+                                    }
+                                    repeat(7 - week.size) {
+                                        Spacer(Modifier.weight(1f))
                                     }
                                 }
                             }

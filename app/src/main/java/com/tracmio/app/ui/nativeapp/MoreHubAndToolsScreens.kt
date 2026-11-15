@@ -62,14 +62,24 @@ fun MoreScreen(
     state: NativeTracmioUiState,
     settings: LiquidGlassSettings,
     palette: ThemePalette,
+    viewModel: NativeTracmioViewModel,
     onNavigate: (String) -> Unit
 ) {
+    var organizeMode by remember { mutableStateOf(false) }
+
     val primaryCards = listOf(
         ToolCatalogItem("budgets", "budgets", "📊", "Planning & Budgets", "Budgets, Runway & Goals", palette.primary),
         ToolCatalogItem("people", "people", "👥", "People & Khata", "Smart Split & Balances", Color(0xFFA855F7)),
         ToolCatalogItem("cash_counter", "cash_counter", "💵", "3-Step Cash Counter", "Notes & Coins Reconcile", Color(0xFF34D399)),
         ToolCatalogItem("guide", "guide", "📘", "App Guide & Manual", "Quick-jump help directory", Color(0xFF38BDF8))
     )
+
+    val orderedTools = remember(state.pinnedToolIds) {
+        val pinnedSet = state.pinnedToolIds.toSet()
+        val pinned = ALL_TOOLS_CATALOG.filter { it.id in pinnedSet }
+        val rest = ALL_TOOLS_CATALOG.filterNot { it.id in pinnedSet }
+        pinned + rest
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("more_screen_list"),
@@ -182,6 +192,113 @@ fun MoreScreen(
                                 )
                                 Text(
                                     card.subtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = palette.textSecondary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+                if (pair.size == 1) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+
+        // Inline Tools Hub Header + Organize Toggle
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "Inline Tools Hub (${orderedTools.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = palette.textPrimary
+                    )
+                    Text(
+                        if (organizeMode) "Tap any tool card to Pin / Unpin to top" else "1-tap access to all 24 offline tools",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (organizeMode) palette.primary else palette.textSecondary
+                    )
+                }
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (organizeMode) palette.primary else palette.surfaceElevated,
+                    modifier = Modifier
+                        .border(1.dp, palette.primary, RoundedCornerShape(14.dp))
+                        .clickable { organizeMode = !organizeMode }
+                        .testTag("more_inline_organize_button")
+                ) {
+                    Text(
+                        if (organizeMode) "✓ Done" else "⇄ Organize",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (organizeMode) palette.background else palette.primary,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+        }
+
+        // Inline 24-Tool Grid inside More
+        items(orderedTools.chunked(2)) { pair ->
+            Row(
+                modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                pair.forEach { tool ->
+                    val isPinned = state.pinnedToolIds.contains(tool.id)
+                    GlassCard(
+                        settings = settings,
+                        borderColor = if (isPinned) palette.primary else null,
+                        onClick = {
+                            if (organizeMode) {
+                                viewModel.toggleToolPin(tool.id)
+                            } else {
+                                onNavigate(tool.route)
+                            }
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .testTag("inline_tool_card_${tool.id}")
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(14.dp),
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                GlassBadge3D(emoji = tool.emoji, accent = tool.accent, sizeDp = 38.dp)
+                                if (isPinned || organizeMode) {
+                                    Text(
+                                        if (isPinned) "📌" else "＋",
+                                        fontSize = 13.sp,
+                                        color = if (isPinned) palette.primary else palette.textSecondary
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    tool.title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = palette.textPrimary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    tool.subtitle,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = palette.textSecondary,
                                     maxLines = 2,

@@ -466,6 +466,110 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun deleteAccount(account: AccountEntity) {
+        val repo = requireRepo() ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val allAccounts = repo.accounts.first()
+            if (allAccounts.size <= 1) {
+                statusMessageFlow.value = "Cannot delete the last remaining account"
+                return@launch
+            }
+            repo.deleteAccount(account)
+            statusMessageFlow.value = "Deleted account ${account.name}"
+        }
+    }
+
+    fun quickAccountDepositOrWithdraw(accountId: Long, isDeposit: Boolean, amount: Double, note: String) {
+        if (!isValidPositiveAmount(amount)) {
+            statusMessageFlow.value = "Enter a valid positive amount"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val cleanAmt = MoneyPaise.roundRupees(amount)
+        viewModelScope.launch(Dispatchers.IO) {
+            val acc = repo.getAccountById(accountId) ?: return@launch
+            val cleanNote = TracmioSecurityEngine.sanitizeInput(
+                note.ifBlank { if (isDeposit) "Quick Deposit to ${acc.name}" else "Quick Withdrawal from ${acc.name}" },
+                150
+            )
+            repo.runInTransaction {
+                repo.insertTransaction(
+                    TransactionEntity(
+                        accountId = accountId,
+                        type = if (isDeposit) "INCOME" else "EXPENSE",
+                        amount = cleanAmt,
+                        amountPaise = MoneyPaise.toPaise(cleanAmt),
+                        category = if (isDeposit) "Income / Salary" else "Cash Withdrawal",
+                        paymentMethod = acc.accountType,
+                        note = cleanNote
+                    )
+                )
+                if (isDeposit) {
+                    val splitAcc = NativeLedgerCalculator.applyAutoSplitToAllocations(acc, cleanAmt)
+                    if (splitAcc != acc) repo.updateAccount(splitAcc)
+                }
+            }
+            val verb = if (isDeposit) "Deposited" else "Withdrew"
+            statusMessageFlow.value = "$verb ${settingsFlow.value.currencySymbol}${"%,.0f".format(cleanAmt)} (${acc.name})"
+        }
+    }
+
+    fun parseAndLogSmsAlert(smsText: String): Boolean {
+        val cleanSms = TracmioSecurityEngine.sanitizeInput(smsText, 400)
+        if (cleanSms.isBlank()) {
+            statusMessageFlow.value = "Paste a bank or UPI SMS alert first"
+            return false
+        }
+        val amtRegex = Regex("""(?i)(?:rs\.?|inr|₹)\s*([0-9,]+(?:\.[0-9]{1,2})?)""")
+        val fallbackRegex = Regex("""([0-9,]+(?:\.[0-9]{1,2})?)""")
+        val rawAmtStr = amtRegex.find(cleanSms)?.groupValues?.getOrNull(1)
+            ?: fallbackRegex.find(cleanSms)?.groupValues?.getOrNull(1)
+        val parsedAmount = rawAmtStr?.replace(",", "")?.toDoubleOrNull() ?: 0.0
+        if (!isValidPositiveAmount(parsedAmount)) {
+            statusMessageFlow.value = "Could not detect a valid ₹ / INR amount in alert text"
+            return false
+        }
+        val lower = cleanSms.lowercase()
+        val isIncome = (lower.contains("credited") || lower.contains("received") || lower.contains("deposited")) &&
+            !lower.contains("debited")
+        val txType = if (isIncome) "INCOME" else "EXPENSE"
+        val isUpi = lower.contains("upi") || lower.contains("vpa") || lower.contains("@")
+        val merchantMatch = Regex("""(?i)(?:to|at|from|vpa|info:?)\s+([A-Za-z0-9@_.\-\s]{2,28})""").find(cleanSms)
+        val merchant = merchantMatch?.groupValues?.getOrNull(1)?.trim()?.take(26) ?: if (isUpi) "UPI Alert" else "Bank Alert"
+        val category = when {
+            isIncome -> "Salary / Income"
+            lower.contains("swiggy") || lower.contains("zomato") || lower.contains("food") || lower.contains("cafe") -> "Food & Dining"
+            lower.contains("uber") || lower.contains("ola") || lower.contains("rapido") || lower.contains("petrol") || lower.contains("fuel") -> "Transport"
+            lower.contains("amazon") || lower.contains("flipkart") || lower.contains("myntra") -> "Shopping"
+            lower.contains("jio") || lower.contains("airtel") || lower.contains("vi") || lower.contains("electricity") || lower.contains("bill") -> "Bills & Utilities"
+            else -> "Other"
+        }
+        val repo = requireRepo() ?: return false
+        val cleanAmt = MoneyPaise.roundRupees(parsedAmount)
+        viewModelScope.launch(Dispatchers.IO) {
+            val defaultAcc = repo.accounts.first().firstOrNull { !it.accountType.equals("Cash", true) }
+                ?: repo.accounts.first().firstOrNull()
+            val accId = defaultAcc?.id ?: 1L
+            repo.runInTransaction {
+                repo.insertTransaction(
+                    TransactionEntity(
+                        accountId = accId,
+                        type = txType,
+                        amount = cleanAmt,
+                        amountPaise = MoneyPaise.toPaise(cleanAmt),
+                        category = category,
+                        paymentMethod = if (isUpi) "UPI" else "Bank Transfer",
+                        upiApp = if (isUpi) "GPay" else "",
+                        note = "📩 [$merchant] ${cleanSms.take(90)}"
+                    )
+                )
+                if (txType == "EXPENSE") applyRoundUpIfEnabled(repo, cleanAmt)
+            }
+            statusMessageFlow.value = "Auto-logged $txType ${settingsFlow.value.currencySymbol}${"%,.0f".format(cleanAmt)} ($category)"
+        }
+        return true
+    }
+
     fun updateAccountAllocations(account: AccountEntity, allocations: List<AccountAllocation>) {
         val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) {
@@ -617,7 +721,8 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         warrantyDate: String,
         allocationId: String,
         cashPortion: Double,
-        upiPortion: Double
+        upiPortion: Double,
+        attachmentUri: String? = null
     ) {
         if (!isValidPositiveAmount(amount) || !cashPortion.isFinite() || !upiPortion.isFinite() || cashPortion < 0.0 || upiPortion < 0.0) {
             statusMessageFlow.value = "Enter a valid positive transaction amount"
@@ -690,7 +795,8 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
                             note = cleanNote,
                             hashtags = hashtags,
                             warrantyDate = cleanWarranty,
-                            allocationId = allocationId
+                            allocationId = allocationId,
+                            attachmentUri = attachmentUri?.takeIf { it.isNotBlank() } ?: existing.attachmentUri
                         )
                     } else {
                         TransactionEntity(
@@ -706,7 +812,8 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
                             note = cleanNote,
                             hashtags = hashtags,
                             warrantyDate = cleanWarranty,
-                            allocationId = allocationId
+                            allocationId = allocationId,
+                            attachmentUri = attachmentUri ?: ""
                         )
                     }
                     repo.updateTransaction(updated)
@@ -733,7 +840,8 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
                     note = cleanNote,
                     hashtags = hashtags,
                     warrantyDate = cleanWarranty,
-                    allocationId = allocationId
+                    allocationId = allocationId,
+                    attachmentUri = attachmentUri ?: ""
                 )
                 repo.runInTransaction {
                     repo.insertTransaction(tx)
@@ -1082,6 +1190,30 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun buyWishlistItemNow(item: WishlistCooldownEntity) {
+        val repo = requireRepo() ?: return
+        val cleanPrice = MoneyPaise.roundRupees(item.price)
+        viewModelScope.launch(Dispatchers.IO) {
+            val accId = repo.accounts.first().firstOrNull()?.id ?: 1L
+            repo.runInTransaction {
+                repo.updateWishlistCooldown(item.copy(status = "PURCHASED"))
+                repo.insertTransaction(
+                    TransactionEntity(
+                        accountId = accId,
+                        type = "EXPENSE",
+                        amount = cleanPrice,
+                        amountPaise = MoneyPaise.toPaise(cleanPrice),
+                        category = "Shopping",
+                        paymentMethod = "UPI",
+                        note = "🛒 Wishlist Purchase: ${item.itemName}"
+                    )
+                )
+                applyRoundUpIfEnabled(repo, cleanPrice)
+            }
+            statusMessageFlow.value = "Purchased & logged ${item.itemName} (${settingsFlow.value.currencySymbol}${cleanPrice.toInt()})"
+        }
+    }
+
     fun addCashbackReward(app: String, amount: Double) {
         val cleanApp = TracmioSecurityEngine.sanitizeInput(app, 60)
         if (cleanApp.isBlank() || !isValidPositiveAmount(amount)) {
@@ -1146,6 +1278,33 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     fun deleteSubscription(sub: SubscriptionEntity) {
         val repo = requireRepo() ?: return
         viewModelScope.launch(Dispatchers.IO) { repo.deleteSubscription(sub) }
+    }
+
+    fun paySubscriptionNow(sub: SubscriptionEntity) {
+        val repo = requireRepo() ?: return
+        val cleanAmt = MoneyPaise.roundRupees(sub.amount)
+        viewModelScope.launch(Dispatchers.IO) {
+            val accId = repo.accounts.first().firstOrNull()?.id ?: 1L
+            val stepMillis = sub.validityDays.coerceAtLeast(1).toLong() * 86_400_000L
+            val nextBase = maxOf(System.currentTimeMillis(), sub.nextDueDateMillis)
+            val nextDue = nextBase + stepMillis
+            repo.runInTransaction {
+                repo.updateSubscription(sub.copy(nextDueDateMillis = nextDue))
+                repo.insertTransaction(
+                    TransactionEntity(
+                        accountId = accId,
+                        type = "EXPENSE",
+                        amount = cleanAmt,
+                        amountPaise = MoneyPaise.toPaise(cleanAmt),
+                        category = if (sub.isSimOrWifi) "Recharge / SIM" else "Subscriptions",
+                        paymentMethod = "UPI",
+                        note = "🔄 Paid ${sub.name} (${sub.billingCycle})"
+                    )
+                )
+                applyRoundUpIfEnabled(repo, cleanAmt)
+            }
+            statusMessageFlow.value = "Logged ${sub.name} payment & advanced next due date"
+        }
     }
 
     fun addAcademicEvent(title: String, fee: Double, dueDate: String, semester: String) {

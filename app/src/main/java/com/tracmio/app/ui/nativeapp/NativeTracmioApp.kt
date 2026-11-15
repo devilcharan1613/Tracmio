@@ -162,11 +162,13 @@ fun NativeTracmioApp(
 
             Scaffold(
                 containerColor = Color.Transparent,
-                contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal),
                 snackbarHost = {
                     SnackbarHost(
                         hostState = snackbarHostState,
-                        modifier = Modifier.padding(bottom = 86.dp)
+                        modifier = Modifier
+                            .navigationBarsPadding()
+                            .padding(bottom = 86.dp)
                     )
                 },
                 topBar = {
@@ -185,14 +187,23 @@ fun NativeTracmioApp(
                             addTxInitialType = "EXPENSE"
                             showAddTxSheet = true
                         },
-                        modifier = Modifier.statusBarsPadding()
+                        modifier = Modifier
+                            .windowInsetsPadding(
+                                WindowInsets.statusBars.union(
+                                    WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+                                )
+                            )
                     )
                 },
                 bottomBar = {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .navigationBarsPadding()
+                            .windowInsetsPadding(
+                                WindowInsets.navigationBars.union(
+                                    WindowInsets.displayCutout.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
+                                )
+                            )
                             .padding(horizontal = 16.dp, vertical = 10.dp)
                     ) {
                         FloatingGlassBottomNav(
@@ -212,6 +223,12 @@ fun NativeTracmioApp(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(padding)
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                        .border(
+                            width = 1.dp,
+                            color = palette.primary.copy(alpha = 0.18f),
+                            shape = RoundedCornerShape(26.dp)
+                        )
                 ) {
                     AnimatedContent(
                         targetState = currentRoute,
@@ -249,6 +266,7 @@ fun NativeTracmioApp(
                                 state = state,
                                 settings = settings,
                                 palette = palette,
+                                viewModel = viewModel,
                                 onNavigate = { navigateTo(it) }
                             )
                             "tools_hub" -> ToolsHubFolderScreen(
@@ -273,40 +291,17 @@ fun NativeTracmioApp(
                                 onBack = { navigateBack() }
                             )
                             // Planning, People, Khata, Wishlist, Cashback, PPU, Round-Up, Runway, Debt Planner
-                            "people", "khata" -> PlanningAndPeopleScreens(
-                                subRoute = "people",
-                                state = state,
-                                settings = settings,
-                                palette = palette,
-                                viewModel = viewModel,
-                                hostCallbacks = hostCallbacks,
-                                onSelectSubRoute = { replaceSubRoute(it) }
-                            )
-                            "planning", "budgets", "runway" -> PlanningAndPeopleScreens(
-                                subRoute = "budgets",
-                                state = state,
-                                settings = settings,
-                                palette = palette,
-                                viewModel = viewModel,
-                                hostCallbacks = hostCallbacks,
-                                onSelectSubRoute = { replaceSubRoute(it) }
-                            )
-                            "goals", "wishlist", "cashback", "price_per_use", "round_up" -> PlanningAndPeopleScreens(
-                                subRoute = "goals",
-                                state = state,
-                                settings = settings,
-                                palette = palette,
-                                viewModel = viewModel,
-                                hostCallbacks = hostCallbacks,
-                                onSelectSubRoute = { replaceSubRoute(it) }
-                            )
+                            "people", "khata",
+                            "planning", "budgets", "runway",
+                            "goals", "wishlist", "cashback", "price_per_use", "round_up",
                             "loans", "debt_planner" -> PlanningAndPeopleScreens(
-                                subRoute = "loans",
+                                subRoute = route,
                                 state = state,
                                 settings = settings,
                                 palette = palette,
                                 viewModel = viewModel,
                                 hostCallbacks = hostCallbacks,
+                                onBack = { navigateBack() },
                                 onSelectSubRoute = { replaceSubRoute(it) }
                             )
                             // Reports & Intelligence
@@ -316,6 +311,7 @@ fun NativeTracmioApp(
                                 settings = settings,
                                 palette = palette,
                                 viewModel = viewModel,
+                                onBack = { navigateBack() },
                                 onSelectSubRoute = { replaceSubRoute(it) }
                             )
                             // Trackers & Time Machine
@@ -325,6 +321,7 @@ fun NativeTracmioApp(
                                 settings = settings,
                                 palette = palette,
                                 viewModel = viewModel,
+                                onBack = { navigateBack() },
                                 onSelectSubRoute = { replaceSubRoute(it) }
                             )
                             // Tools Hub utility screens
@@ -417,6 +414,7 @@ fun NativeTracmioApp(
                     viewModel = viewModel,
                     editingTransaction = editingTransaction,
                     initialType = addTxInitialType,
+                    hostCallbacks = hostCallbacks,
                     onDismiss = {
                         showAddTxSheet = false
                         editingTransaction = null
@@ -477,6 +475,7 @@ fun NativeTracmioApp(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(palette.background.copy(alpha = 0.96f))
+                        .systemBarsPadding()
                         .padding(24.dp)
                         .testTag("vault_security_error_overlay"),
                     contentAlignment = Alignment.Center
