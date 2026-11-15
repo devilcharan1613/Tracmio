@@ -17,12 +17,12 @@
 -keep class androidx.biometric.** { *; }
 
 # BroadcastReceivers & Core Models
--keep class com.tracemeo.app.*Receiver { *; }
--keep class com.tracemeo.app.data.local.* { *; }
--keep class com.tracemeo.app.data.CashCountLine { *; }
--keep class com.tracemeo.app.data.AccountAllocation { *; }
--keep class com.tracemeo.app.data.QuickSpendChip { *; }
--keep class com.tracemeo.app.data.PendingRefundItem { *; }
+-keep class com.tracmio.app.*Receiver { *; }
+-keep class com.tracmio.app.data.local.* { *; }
+-keep class com.tracmio.app.data.CashCountLine { *; }
+-keep class com.tracmio.app.data.AccountAllocation { *; }
+-keep class com.tracmio.app.data.QuickSpendChip { *; }
+-keep class com.tracmio.app.data.PendingRefundItem { *; }
 
 # Kotlin Coroutines
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
