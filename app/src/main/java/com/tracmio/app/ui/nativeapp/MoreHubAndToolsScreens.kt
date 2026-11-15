@@ -64,11 +64,16 @@ fun MoreScreen(
     palette: ThemePalette,
     onNavigate: (String) -> Unit
 ) {
+    // PDF reference: More hub presents the core destinations as a consistent 2-column glass grid.
+    // Keep the same native routes so existing Room-backed screens and data handlers remain in use.
     val primaryCards = listOf(
-        ToolCatalogItem("budgets", "budgets", "📊", "Planning & Budgets", "Budgets, Runway & Goals", palette.primary),
-        ToolCatalogItem("people", "people", "👥", "People & Khata", "Smart Split & Balances", Color(0xFFA855F7)),
-        ToolCatalogItem("cash_counter", "cash_counter", "💵", "3-Step Cash Counter", "Notes & Coins Reconcile", Color(0xFF34D399)),
-        ToolCatalogItem("guide", "guide", "📘", "App Guide & Manual", "Quick-jump help directory", Color(0xFF38BDF8))
+        ToolCatalogItem("reports", "reports", "📈", "Reports", "Insights and breakdowns", palette.primary),
+        ToolCatalogItem("transactions", "transactions", "🧾", "Transactions", "Activity and ledger", Color(0xFF38BDF8)),
+        ToolCatalogItem("budgets", "budgets", "📊", "Budgets", "Plan monthly spending", Color(0xFF00D6A3)),
+        ToolCatalogItem("goals", "goals", "💎", "Savings Goals", "Track your targets", Color(0xFFA855F7)),
+        ToolCatalogItem("loans", "loans", "🏦", "Loans & EMI", "Track repayments", Color(0xFFFBBF24)),
+        ToolCatalogItem("people", "people", "👥", "People", "Borrowed and lent", Color(0xFF38BDF8)),
+        ToolCatalogItem("themes", "themes", "⚙️", "Settings", "Theme and app appearance", Color(0xFF34D399))
     )
 
     LazyColumn(
