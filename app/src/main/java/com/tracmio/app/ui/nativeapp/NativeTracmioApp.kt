@@ -18,10 +18,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
-import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
@@ -29,15 +29,23 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tracmio.app.data.local.TransactionEntity
 import com.tracmio.app.data.security.TracmioSecurityEngine
+import java.util.Calendar
 
 @Composable
 fun NativeTracmioApp(
@@ -160,81 +168,81 @@ fun NativeTracmioApp(
                 tiltYProvider = { tiltY }
             )
 
-            Scaffold(
-                containerColor = Color.Transparent,
-                contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal),
-                snackbarHost = {
-                    SnackbarHost(
-                        hostState = snackbarHostState,
-                        modifier = Modifier
-                            .navigationBarsPadding()
-                            .padding(bottom = 86.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .border(
+                        width = 1.4.dp,
+                        brush = Brush.verticalGradient(
+                            listOf(
+                                palette.primary.copy(alpha = 0.85f),
+                                Color(0xFF38BDF8).copy(alpha = 0.45f),
+                                palette.primary.copy(alpha = 0.80f)
+                            )
+                        ),
+                        shape = RoundedCornerShape(28.dp)
                     )
-                },
-                topBar = {
-                    TracmioTopBar(
-                        settings = settings,
-                        palette = palette,
-                        onSingleTapPrivacy = { viewModel.togglePrivacyMask() },
-                        onTripleTapStealth = {
-                            viewModel.toggleStealthMode()
-                            viewModel.postStatus(
-                                if (!settings.stealthModeActive) "Stealth Mode Activated" else "Stealth Mode Off"
-                            )
-                        },
-                        onQuickAdd = {
-                            editingTransaction = null
-                            addTxInitialType = "EXPENSE"
-                            showAddTxSheet = true
-                        },
-                        modifier = Modifier
-                            .windowInsetsPadding(
-                                WindowInsets.statusBars.union(
-                                    WindowInsets.displayCutout.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
-                                )
-                            )
-                    )
-                },
-                bottomBar = {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .windowInsetsPadding(
-                                WindowInsets.navigationBars.union(
-                                    WindowInsets.displayCutout.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
-                                )
-                            )
-                            .padding(horizontal = 16.dp, vertical = 10.dp)
-                    ) {
-                        FloatingGlassBottomNav(
-                            currentRoute = currentRoute,
+                    .testTag("app_safe_border_frame")
+            ) {
+                Scaffold(
+                    containerColor = Color.Transparent,
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                    snackbarHost = {
+                        SnackbarHost(
+                            hostState = snackbarHostState,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    },
+                    topBar = {
+                        TracmioTopBar(
+                            settings = settings,
                             palette = palette,
-                            onSelectTab = { navigateTo(it) },
+                            onSingleTapPrivacy = { viewModel.togglePrivacyMask() },
+                            onTripleTapStealth = {
+                                viewModel.toggleStealthMode()
+                                viewModel.postStatus(
+                                    if (!settings.stealthModeActive) "Stealth Mode Activated" else "Stealth Mode Off"
+                                )
+                            },
                             onQuickAdd = {
                                 editingTransaction = null
                                 addTxInitialType = "EXPENSE"
                                 showAddTxSheet = true
                             }
                         )
+                    },
+                    bottomBar = {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                        ) {
+                            FloatingGlassBottomNav(
+                                currentRoute = currentRoute,
+                                palette = palette,
+                                onSelectTab = { navigateTo(it) },
+                                onQuickAdd = {
+                                    editingTransaction = null
+                                    addTxInitialType = "EXPENSE"
+                                    showAddTxSheet = true
+                                }
+                            )
+                        }
                     }
-                }
-            ) { padding ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                        .border(
-                            width = 1.dp,
-                            color = palette.primary.copy(alpha = 0.18f),
-                            shape = RoundedCornerShape(26.dp)
-                        )
-                ) {
-                    AnimatedContent(
-                        targetState = currentRoute,
-                        transitionSpec = { fadeIn() togetherWith fadeOut() },
-                        label = "tracmio_screen"
-                    ) { route ->
+                ) { padding ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                    ) {
+                        AnimatedContent(
+                            targetState = currentRoute,
+                            transitionSpec = { fadeIn() togetherWith fadeOut() },
+                            label = "tracmio_screen"
+                        ) { route ->
                         when (route) {
                             "dashboard" -> DashboardScreen(
                                 state = state,
@@ -405,6 +413,7 @@ fun NativeTracmioApp(
                     }
                 }
             }
+            }
 
             if (showAddTxSheet) {
                 AddEditTransactionSheet(
@@ -526,79 +535,133 @@ fun TracmioTopBar(
 ) {
     var tapCount by remember { mutableIntStateOf(0) }
     var lastTapMs by remember { mutableLongStateOf(0L) }
+    val greeting = remember {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        when {
+            hour < 12 -> "Good Morning"
+            hour < 17 -> "Good Afternoon"
+            else -> "Good Evening"
+        }
+    }
+    val userName = settings.userName.ifBlank { "Charan" }
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .testTag("tracmio_topbar"),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(palette.surfaceElevated)
-                    .border(1.5.dp, palette.primary, RoundedCornerShape(12.dp)),
-                contentAlignment = Alignment.Center
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("₹", fontWeight = FontWeight.ExtraBold, color = palette.primary)
-            }
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Trac", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
-                    Text("mio", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = palette.primary)
-                }
+                TracmioBrandBadge(sizeDp = 42.dp, accent = palette.primary)
                 Text(
-                    if (settings.stealthModeActive) "Stealth Mode Active" else "Offline Finance (${settings.currencySymbol})",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.textSecondary
+                    text = buildAnnotatedString {
+                        withStyle(
+                            SpanStyle(
+                                color = palette.textPrimary,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontStyle = FontStyle.Italic
+                            )
+                        ) {
+                            append("Trac")
+                        }
+                        withStyle(
+                            SpanStyle(
+                                color = if (palette.isLight) palette.primary else Color(0xFF10E89A),
+                                fontWeight = FontWeight.ExtraBold,
+                                fontStyle = FontStyle.Italic
+                            )
+                        ) {
+                            append("mio")
+                        }
+                    },
+                    fontSize = 24.sp,
+                    letterSpacing = (-0.5).sp
                 )
             }
+            Text(
+                text = if (settings.stealthModeActive) "Stealth Mode Active 🕶️" else "$greeting, $userName 👋",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = palette.textPrimary.copy(alpha = 0.92f),
+                maxLines = 1
+            )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
-                onClick = {
-                    val now = System.currentTimeMillis()
-                    if (now - lastTapMs <= 750L) {
-                        tapCount += 1
-                    } else {
-                        tapCount = 1
-                    }
-                    lastTapMs = now
-                    if (tapCount >= 3) {
-                        tapCount = 0
-                        onTripleTapStealth()
-                    } else {
-                        onSingleTapPrivacy()
-                    }
-                },
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .size(44.dp)
-                    .background(palette.surface, CircleShape)
-                    .border(1.dp, palette.primary.copy(alpha = 0.4f), CircleShape)
+                    .clip(CircleShape)
+                    .background(if (palette.isLight) palette.surfaceElevated else Color(0xCC111D28))
+                    .border(1.2.dp, if (palette.isLight) palette.surfaceBorder else Color(0x4DFFFFFF), CircleShape)
+                    .clickable {
+                        val now = System.currentTimeMillis()
+                        if (now - lastTapMs <= 750L) {
+                            tapCount += 1
+                        } else {
+                            tapCount = 1
+                        }
+                        lastTapMs = now
+                        if (tapCount >= 3) {
+                            tapCount = 0
+                            onTripleTapStealth()
+                        } else {
+                            onSingleTapPrivacy()
+                        }
+                    }
                     .testTag("privacy_eye_button")
             ) {
                 Icon(
                     imageVector = if (settings.privacyMaskActive || settings.stealthModeActive) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                    contentDescription = "Privacy Eye",
-                    tint = palette.primary,
+                    contentDescription = "Toggle Amount Privacy",
+                    tint = palette.textPrimary,
                     modifier = Modifier.size(20.dp)
                 )
             }
-            Button(
-                onClick = onQuickAdd,
-                colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
-                shape = RoundedCornerShape(20.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                modifier = Modifier.testTag("topbar_quick_add_button")
+
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .shadow(
+                        elevation = 10.dp,
+                        shape = RoundedCornerShape(999.dp),
+                        ambientColor = palette.primary.copy(alpha = 0.55f),
+                        spotColor = palette.primary.copy(alpha = 0.65f)
+                    )
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            if (palette.isLight) {
+                                listOf(palette.primary.copy(alpha = 0.22f), palette.secondary.copy(alpha = 0.14f))
+                            } else {
+                                listOf(Color(0xE0092A2D), Color(0xE00C3C3D))
+                            }
+                        )
+                    )
+                    .border(1.6.dp, palette.primary, RoundedCornerShape(999.dp))
+                    .clickable(onClick = onQuickAdd)
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .testTag("topbar_quick_add_button")
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, tint = palette.background, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Add", color = palette.background, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "+ Add",
+                    color = if (palette.isLight) palette.primary else Color.White,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 14.sp
+                )
             }
         }
     }
@@ -612,60 +675,106 @@ private fun FloatingGlassBottomNav(
     onQuickAdd: () -> Unit
 ) {
     val leftTabs = listOf(
-        Triple("dashboard", "Home", Icons.Default.Dashboard),
-        Triple("accounts", "Accounts", Icons.Default.AccountBalanceWallet)
+        Triple("dashboard", "Home", Icons.Default.Home),
+        Triple("accounts", "Accounts", Icons.Default.CreditCard)
     )
     val rightTabs = listOf(
         Triple("transactions", "Transactions", Icons.AutoMirrored.Filled.ReceiptLong),
-        Triple("more", "More", Icons.Default.GridView)
+        Triple("more", "More", Icons.Default.Menu)
     )
     val coreTabRoutes = remember { setOf("dashboard", "accounts", "transactions") }
 
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(30.dp))
-            .background(palette.surface.copy(alpha = 0.90f))
-            .border(1.6.dp, palette.primary.copy(alpha = 0.5f), RoundedCornerShape(30.dp))
-            .padding(horizontal = 8.dp, vertical = 7.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .height(78.dp),
+        contentAlignment = Alignment.BottomCenter
     ) {
-        leftTabs.forEach { (route, label, icon) ->
-            BottomNavTabItem(
-                route = route,
-                label = label,
-                icon = icon,
-                selected = currentRoute == route,
-                palette = palette,
-                onClick = { onSelectTab(route) },
-                modifier = Modifier.weight(1f)
-            )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(66.dp)
+                .clip(RoundedCornerShape(28.dp))
+                .background(
+                    Brush.verticalGradient(
+                        if (palette.isLight) {
+                            listOf(palette.surfaceElevated.copy(alpha = 0.94f), palette.surface.copy(alpha = 0.92f))
+                        } else {
+                            listOf(Color(0xEB152D3B), Color(0xF2081622))
+                        }
+                    )
+                )
+                .border(
+                    width = 1.3.dp,
+                    brush = Brush.verticalGradient(
+                        if (palette.isLight) {
+                            listOf(palette.primary.copy(alpha = 0.45f), palette.surfaceBorder)
+                        } else {
+                            listOf(Color(0x66A5F3FC), Color(0x287DF5FF), Color(0x33A855F7))
+                        }
+                    ),
+                    shape = RoundedCornerShape(28.dp)
+                )
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            leftTabs.forEach { (route, label, icon) ->
+                BottomNavTabItem(
+                    route = route,
+                    label = label,
+                    icon = icon,
+                    selected = currentRoute == route,
+                    palette = palette,
+                    onClick = { onSelectTab(route) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.weight(0.9f))
+
+            rightTabs.forEach { (route, label, icon) ->
+                val isSelected = currentRoute == route || (route == "more" && currentRoute !in coreTabRoutes)
+                BottomNavTabItem(
+                    route = route,
+                    label = label,
+                    icon = icon,
+                    selected = isSelected,
+                    palette = palette,
+                    onClick = { onSelectTab(route) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
 
+        // Raised glowing central + button protruding above the rounded glass dock
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .padding(horizontal = 6.dp)
-                .size(54.dp)
+                .align(Alignment.TopCenter)
+                .offset(y = 2.dp)
+                .size(58.dp)
+                .shadow(
+                    elevation = 14.dp,
+                    shape = CircleShape,
+                    ambientColor = palette.primary.copy(alpha = 0.8f),
+                    spotColor = palette.primary.copy(alpha = 0.85f)
+                )
                 .clip(CircleShape)
-                .background(palette.primary)
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF67FBE0), palette.primary, Color(0xFF00C2B2))
+                    )
+                )
+                .border(1.8.dp, Color(0xCCF0FDFA), CircleShape)
                 .clickable(onClick = onQuickAdd)
                 .testTag("nav_quick_add_fab")
         ) {
-            Icon(Icons.Default.Add, contentDescription = "Add", tint = palette.background, modifier = Modifier.size(28.dp))
-        }
-
-        rightTabs.forEach { (route, label, icon) ->
-            val isSelected = currentRoute == route || (route == "more" && currentRoute !in coreTabRoutes)
-            BottomNavTabItem(
-                route = route,
-                label = label,
-                icon = icon,
-                selected = isSelected,
-                palette = palette,
-                onClick = { onSelectTab(route) },
-                modifier = Modifier.weight(1f)
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = "Add Transaction",
+                tint = Color(0xFF031923),
+                modifier = Modifier.size(30.dp)
             )
         }
     }
@@ -683,21 +792,42 @@ private fun BottomNavTabItem(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(22.dp))
             .then(
-                if (selected) Modifier.background(palette.primary.copy(alpha = 0.2f)).border(1.4.dp, palette.primary, RoundedCornerShape(20.dp))
-                else Modifier
+                if (selected) {
+                    Modifier
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    palette.primary.copy(alpha = 0.24f),
+                                    palette.primary.copy(alpha = 0.10f)
+                                )
+                            )
+                        )
+                        .border(1.4.dp, palette.primary.copy(alpha = 0.85f), RoundedCornerShape(22.dp))
+                } else {
+                    Modifier
+                }
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 6.dp)
+            .padding(horizontal = 2.dp, vertical = 4.dp)
             .testTag("bottom_nav_$route")
     ) {
-        Icon(icon, contentDescription = label, tint = if (selected) palette.primary else palette.textSecondary, modifier = Modifier.size(22.dp))
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (selected) palette.primary else palette.textSecondary,
+            modifier = Modifier.size(21.dp)
+        )
+        Spacer(Modifier.height(2.dp))
         Text(
-            label,
+            text = label,
             style = MaterialTheme.typography.labelSmall,
-            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Bold,
+            fontSize = 10.sp,
+            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
             color = if (selected) palette.primary else palette.textSecondary,
             maxLines = 1
         )

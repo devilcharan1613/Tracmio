@@ -88,16 +88,16 @@ object ThemePresets {
             primary = Color(0xFF00F5D4),
             secondary = Color(0xFFA855F7),
             tertiary = Color(0xFFFBBF24),
-            background = Color(0xFF031923),
-            backgroundMid = Color(0xFF052230),
-            backgroundBottom = Color(0xFF04131A),
-            surface = Color(0xC7092B3C),
-            surfaceElevated = Color(0xE00F3A4E),
-            surfaceBorder = Color(0x3D7DF5FF),
+            background = Color(0xFF030B10),
+            backgroundMid = Color(0xFF06161F),
+            backgroundBottom = Color(0xFF030910),
+            surface = Color(0xCC0A2534),
+            surfaceElevated = Color(0xE010364A),
+            surfaceBorder = Color(0x477DF5FF),
             textPrimary = Color(0xFFFFFFFF),
-            textSecondary = Color(0xFFC0D4DF),
+            textSecondary = Color(0xFFC2D6E2),
             meshGlow1 = Color(0xFF00D6A3),
-            meshGlow2 = Color(0xFF695FDC)
+            meshGlow2 = Color(0xFF7E22CE)
         ),
         ThemePalette(
             id = "tracmio",
@@ -543,7 +543,7 @@ fun LiquidMeshBackground(
                     translationY = tiltYProvider() * 14f
                 }
         ) {
-            val glowAlpha = (0.28f * settings.glowIntensity).coerceIn(0.08f, 0.55f)
+            val glowAlpha = (0.26f * settings.glowIntensity).coerceIn(0.08f, 0.52f)
             val (orb1Color, orb2Color, orb3Color) = when (settings.wallpaperPreset) {
                 "wp2" -> Triple(Color(0xFFA855F7), Color(0xFF6366F1), palette.primary)
                 "wp3" -> Triple(Color(0xFF10B981), Color(0xFF00D6A3), Color(0xFF38BDF8))
@@ -554,47 +554,51 @@ fun LiquidMeshBackground(
                 "wp8" -> Triple(Color(0xFF0284C7), Color(0xFF0E7490), Color(0xFF1E3A8A))
                 "wp9" -> Triple(Color(0xFF34D399), Color(0xFF00F5D4), Color(0xFF8B5CF6))
                 "wp10" -> Triple(Color(0xFFC084FC), Color(0xFF00F5D4), Color(0xFFFBBF24))
-                else -> Triple(palette.meshGlow1, palette.meshGlow2, palette.primary)
+                else -> Triple(
+                    palette.meshGlow1,
+                    if (palette.id == "dark") Color(0xFF6B1035) else palette.meshGlow2,
+                    palette.primary
+                )
             }
             val orb1Center = Offset(
-                x = size.width * (0.22f + 0.08f * cos(phase)),
-                y = size.height * (0.18f + 0.06f * sin(phase))
+                x = size.width * (0.20f + 0.06f * cos(phase)),
+                y = size.height * (0.14f + 0.05f * sin(phase))
             )
             val orb2Center = Offset(
-                x = size.width * (0.78f - 0.08f * sin(phase)),
-                y = size.height * (0.48f + 0.08f * cos(phase))
+                x = size.width * (0.68f - 0.06f * sin(phase)),
+                y = size.height * (0.50f + 0.06f * cos(phase))
             )
             val orb3Center = Offset(
-                x = size.width * (0.35f + 0.06f * sin(phase * 0.7f)),
-                y = size.height * (0.82f - 0.05f * cos(phase * 0.7f))
+                x = size.width * (0.35f + 0.05f * sin(phase * 0.7f)),
+                y = size.height * (0.86f - 0.04f * cos(phase * 0.7f))
             )
 
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(orb1Color.copy(alpha = glowAlpha), Color.Transparent),
                     center = orb1Center,
-                    radius = size.width * 0.72f
+                    radius = size.width * 0.78f
                 ),
                 center = orb1Center,
+                radius = size.width * 0.78f
+            )
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(orb2Color.copy(alpha = glowAlpha * 0.95f), Color.Transparent),
+                    center = orb2Center,
+                    radius = size.width * 0.72f
+                ),
+                center = orb2Center,
                 radius = size.width * 0.72f
             )
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(orb2Color.copy(alpha = glowAlpha * 0.9f), Color.Transparent),
-                    center = orb2Center,
-                    radius = size.width * 0.68f
-                ),
-                center = orb2Center,
-                radius = size.width * 0.68f
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(orb3Color.copy(alpha = glowAlpha * 0.65f), Color.Transparent),
+                    colors = listOf(orb3Color.copy(alpha = glowAlpha * 0.55f), Color.Transparent),
                     center = orb3Center,
-                    radius = size.width * 0.62f
+                    radius = size.width * 0.65f
                 ),
                 center = orb3Center,
-                radius = size.width * 0.62f
+                radius = size.width * 0.65f
             )
         }
     }

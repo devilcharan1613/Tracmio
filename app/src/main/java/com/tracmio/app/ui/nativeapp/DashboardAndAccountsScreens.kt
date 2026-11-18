@@ -11,11 +11,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -38,15 +43,6 @@ fun DashboardScreen(
     onOpenTransactionReceipt: (TransactionEntity) -> Unit,
     onNavigate: (String) -> Unit
 ) {
-    val greeting = remember {
-        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        when {
-            hour < 12 -> "Good Morning"
-            hour < 17 -> "Good Afternoon"
-            else -> "Good Evening"
-        }
-    }
-    val userName = settings.userName.ifBlank { "Charan" }
     val curr = settings.currencySymbol
     val mask = settings.privacyMaskActive
     val stealth = settings.stealthModeActive
@@ -57,127 +53,235 @@ fun DashboardScreen(
     val safeToSpend = remember(state.accounts, state.transactions) {
         NativeLedgerCalculator.computeSafeToSpend(state.accounts, state.transactions)
     }
+    val monthDateFraction = remember {
+        val cal = Calendar.getInstance()
+        val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH).coerceAtLeast(1)
+        val currentDay = cal.get(Calendar.DAY_OF_MONTH).coerceIn(1, daysInMonth)
+        currentDay.toFloat() / daysInMonth.toFloat()
+    }
+    val borrowedTotal = remember(state.transactions) {
+        MoneyPaise.toRupees(
+            state.transactions.filter { it.type.equals("BORROW", true) }
+                .sumOf { if (it.amountPaise > 0L) it.amountPaise else MoneyPaise.toPaise(it.amount) }
+        )
+    }
+    val lentTotal = remember(state.transactions) {
+        MoneyPaise.toRupees(
+            state.transactions.filter { it.type.equals("LEND", true) }
+                .sumOf { if (it.amountPaise > 0L) it.amountPaise else MoneyPaise.toPaise(it.amount) }
+        )
+    }
+    val netWorth = remember(state.totalBalance, lentTotal, borrowedTotal) {
+        MoneyPaise.toRupees(
+            MoneyPaise.toPaise(state.totalBalance) + MoneyPaise.toPaise(lentTotal) - MoneyPaise.toPaise(borrowedTotal)
+        )
+    }
     var showAddChipDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("dashboard_list"),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 108.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 108.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // 1. Hero Total Balance Card (Version 2.5 Aurora Wave Reference Design)
         item {
-            Text(
-                text = "$greeting, $userName",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = palette.textPrimary
-            )
-        }
-
-        // 1. Hero Total Balance Card (Reference Screenshot 2 Design)
-        item {
-            GlassCard(
-                settings = settings,
-                shape = RoundedCornerShape(28.dp),
-                borderColor = Color(0x6600F5D4),
-                modifier = Modifier.fillMaxWidth()
+            val heroShape = RoundedCornerShape(28.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(
+                        elevation = 16.dp,
+                        shape = heroShape,
+                        ambientColor = palette.primary.copy(alpha = 0.25f),
+                        spotColor = palette.secondary.copy(alpha = 0.30f)
+                    )
+                    .clip(heroShape)
+                    .border(
+                        width = 1.5.dp,
+                        brush = Brush.linearGradient(
+                            if (palette.isLight) {
+                                listOf(palette.primary.copy(alpha = 0.55f), palette.secondary.copy(alpha = 0.45f))
+                            } else {
+                                listOf(
+                                    Color(0xCC7DF5FF),
+                                    Color(0x8838BDF8),
+                                    Color(0xCCA855F7)
+                                )
+                            }
+                        ),
+                        shape = heroShape
+                    )
+                    .testTag("dashboard_hero_balance_card")
             ) {
-                Box(
+                HeroAuroraWaveBackdrop(
+                    isLight = palette.isLight,
+                    primary = palette.primary,
+                    secondary = palette.secondary,
+                    modifier = Modifier.matchParentSize()
+                )
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            Brush.linearGradient(
-                                if (palette.isLight) {
-                                    listOf(
-                                        palette.surfaceElevated,
-                                        palette.surface,
-                                        palette.primary.copy(alpha = 0.14f)
-                                    )
-                                } else {
-                                    listOf(
-                                        Color(0xFF0E4B5A).copy(alpha = 0.92f),
-                                        Color(0xFF082838).copy(alpha = 0.94f),
-                                        Color(0xFF281B4E).copy(alpha = 0.90f)
-                                    )
-                                }
-                            )
-                        )
-                        .padding(20.dp)
+                        .padding(horizontal = 20.dp, vertical = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
-                            "TOTAL BALANCE",
+                            text = "TOTAL BALANCE",
                             style = MaterialTheme.typography.labelMedium,
-                            color = palette.textSecondary,
+                            color = if (palette.isLight) palette.textSecondary else Color.White.copy(alpha = 0.88f),
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 1.2.sp
+                            letterSpacing = 1.4.sp
                         )
                         Text(
-                            MoneyPaise.formatCurrency(state.totalBalance, curr, stealth, mask),
+                            text = MoneyPaise.formatCurrency(state.totalBalance, curr, stealth, mask),
                             style = MaterialTheme.typography.displaySmall,
+                            fontSize = 36.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = palette.textPrimary
+                            color = palette.textPrimary,
+                            modifier = Modifier.testTag("dashboard_total_balance_value")
                         )
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            // Income Sub-card with emerald/cyan glow
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(if (palette.isLight) Color(0xFFD1FAE5).copy(alpha = 0.9f) else Color(0xFF073B3A).copy(alpha = 0.85f))
-                                    .border(1.4.dp, Color(0xFF00F5D4).copy(alpha = 0.6f), RoundedCornerShape(20.dp))
-                                    .padding(vertical = 14.dp, horizontal = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier
-                                            .size(34.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF10B981))
-                                            .border(1.5.dp, Color(0xFFA7F3D0), CircleShape)
-                                    ) {
-                                        Text("↓", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
-                                    }
-                                    Text(
-                                        MoneyPaise.formatCurrency(state.totalIncome, curr, stealth, mask),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = palette.textPrimary
-                                    )
-                                    Text("Income", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
-                                }
-                            }
+                    }
 
-                            // Expense Sub-card with purple/coral glow
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(if (palette.isLight) Color(0xFFF3E8FF).copy(alpha = 0.9f) else Color(0xFF231942).copy(alpha = 0.85f))
-                                    .border(1.4.dp, Color(0xFFA855F7).copy(alpha = 0.65f), RoundedCornerShape(20.dp))
-                                    .padding(vertical = 14.dp, horizontal = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier = Modifier
-                                            .size(34.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFFEF4444))
-                                            .border(1.5.dp, Color(0xFFFECDD3), CircleShape)
-                                    ) {
-                                        Text("↑", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
-                                    }
-                                    Text(
-                                        MoneyPaise.formatCurrency(state.totalExpense, curr, stealth, mask),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = palette.textPrimary
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Income Glass Sub-Card
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        if (palette.isLight) {
+                                            listOf(Color(0xFFD1FAE5).copy(alpha = 0.92f), Color(0xFFA7F3D0).copy(alpha = 0.72f))
+                                        } else {
+                                            listOf(Color(0xB80B433E), Color(0xD006262C))
+                                        }
                                     )
-                                    Text("Expense", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                                )
+                                .border(
+                                    width = 1.4.dp,
+                                    brush = Brush.linearGradient(
+                                        if (palette.isLight) {
+                                            listOf(Color(0xFF10B981), Color(0xFF059669))
+                                        } else {
+                                            listOf(Color(0xCC7DF5FF), Color(0x8810B981))
+                                        }
+                                    ),
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .padding(vertical = 14.dp, horizontal = 12.dp)
+                                .testTag("dashboard_income_subcard"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            Brush.verticalGradient(
+                                                listOf(Color(0xFF34D399), Color(0xFF059669))
+                                            )
+                                        )
+                                        .border(1.6.dp, Color(0xFFA7F3D0), CircleShape)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDownward,
+                                        contentDescription = "Income",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(19.dp)
+                                    )
                                 }
+                                Text(
+                                    text = MoneyPaise.formatCurrency(state.totalIncome, curr, stealth, mask),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = palette.textPrimary,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = "Income",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = palette.textSecondary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        // Expense Glass Sub-Card
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        if (palette.isLight) {
+                                            listOf(Color(0xFFF3E8FF).copy(alpha = 0.92f), Color(0xFFE9D5FF).copy(alpha = 0.72f))
+                                        } else {
+                                            listOf(Color(0xB8251C48), Color(0xD015112E))
+                                        }
+                                    )
+                                )
+                                .border(
+                                    width = 1.4.dp,
+                                    brush = Brush.linearGradient(
+                                        if (palette.isLight) {
+                                            listOf(Color(0xFFA855F7), Color(0xFF7E22CE))
+                                        } else {
+                                            listOf(Color(0xCCDDD6FE), Color(0x88A855F7))
+                                        }
+                                    ),
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .padding(vertical = 14.dp, horizontal = 12.dp)
+                                .testTag("dashboard_expense_subcard"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            Brush.verticalGradient(
+                                                listOf(Color(0xFFF87171), Color(0xFFDC2626))
+                                            )
+                                        )
+                                        .border(1.6.dp, Color(0xFFFECDD3), CircleShape)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowUpward,
+                                        contentDescription = "Expense",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                                Text(
+                                    text = MoneyPaise.formatCurrency(state.totalExpense, curr, stealth, mask),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = palette.textPrimary,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = "Expense",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = palette.textSecondary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                             }
                         }
                     }
@@ -185,56 +289,166 @@ fun DashboardScreen(
             }
         }
 
-        // 2. Monthly Pace Card
+        // 2. Monthly Pace Card with Expected-Day Needle Marker
         item {
-            LiquidGlassComponents(settings = settings, palette = palette) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("🕒", fontSize = 16.sp)
-                        Text(
-                            "MONTHLY PACE",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = palette.textSecondary,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 1.sp
+            val paceShape = RoundedCornerShape(20.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(paceShape)
+                    .background(
+                        Brush.linearGradient(
+                            if (palette.isLight) {
+                                listOf(palette.surfaceElevated, palette.surface)
+                            } else {
+                                listOf(Color(0xCC122936), Color(0xD90A1824))
+                            }
                         )
+                    )
+                    .border(
+                        width = 1.2.dp,
+                        brush = Brush.linearGradient(
+                            if (palette.isLight) {
+                                listOf(palette.primary.copy(alpha = 0.4f), palette.surfaceBorder)
+                            } else {
+                                listOf(Color(0x557DF5FF), Color(0x28FFFFFF), Color(0x44A855F7))
+                            }
+                        ),
+                        shape = paceShape
+                    )
+                    .clickable { onNavigate("budgets") }
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                    .testTag("dashboard_monthly_pace_card")
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Schedule,
+                                contentDescription = "Monthly Pace",
+                                tint = palette.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = "MONTHLY PACE",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = palette.textPrimary.copy(alpha = 0.85f),
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.1.sp
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (pace.isOnTrack) Color(0xCC064E3B) else Color(0xCC78350F),
+                            modifier = Modifier.border(
+                                1.1.dp,
+                                if (pace.isOnTrack) Color(0xFF10B981) else Color(0xFFF59E0B),
+                                RoundedCornerShape(999.dp)
+                            )
+                        ) {
+                            Text(
+                                text = if (pace.isOnTrack) "● On Track" else "● Overpace",
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (pace.isOnTrack) Color(0xFF34D399) else Color(0xFFFBBF24),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (pace.isOnTrack) Color(0xFF064E3B) else Color(0xFF78350F),
-                        modifier = Modifier.border(
-                            1.dp,
-                            if (pace.isOnTrack) Color(0xFF10B981) else Color(0xFFF59E0B),
-                            RoundedCornerShape(16.dp)
-                        )
+
+                    val spentFraction = (pace.spentSoFar / pace.totalBudget.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f)
+                    MonthlyPaceNeedleTrack(
+                        spentFraction = spentFraction,
+                        expectedFraction = monthDateFraction,
+                        isOnTrack = pace.isOnTrack,
+                        primary = palette.primary
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            if (pace.isOnTrack) "● On Track" else "● Overpace",
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (pace.isOnTrack) Color(0xFF34D399) else Color(0xFFFBBF24),
+                            text = "${pace.remainingDays} days left in month",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = palette.textSecondary
+                        )
+                        Text(
+                            text = "${MoneyPaise.formatCurrency(pace.dailySafeLimit, curr, stealth, mask)}/day safe limit",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = palette.textPrimary,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
-                val progress = (pace.spentSoFar / pace.totalBudget.coerceAtLeast(1.0)).toFloat().coerceIn(0.05f, 1f)
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                    color = palette.primary,
-                    trackColor = palette.surfaceElevated
+            }
+        }
+
+        // 3. QUICK STATS (2x2 Glass Grid Matching Version 2.5 Screenshot)
+        item {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.testTag("dashboard_quick_stats_section")
+            ) {
+                Text(
+                    text = "QUICK STATS",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = palette.textPrimary,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.2.sp
                 )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("${pace.remainingDays} days left in month", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
-                    Text(
-                        "${MoneyPaise.formatCurrency(pace.dailySafeLimit, curr, stealth, mask)}/day safe limit",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = palette.textPrimary,
-                        fontWeight = FontWeight.Bold
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    QuickStatGlassCard(
+                        iconType = QuickStatIconType.BORROWED,
+                        valueText = MoneyPaise.formatCurrency(borrowedTotal, curr, stealth, mask),
+                        label = "Borrowed",
+                        valueColor = palette.textPrimary,
+                        palette = palette,
+                        modifier = Modifier.weight(1f).fillMaxHeight().testTag("quick_stat_borrowed"),
+                        onClick = { onNavigate("people") }
+                    )
+                    QuickStatGlassCard(
+                        iconType = QuickStatIconType.LENT,
+                        valueText = MoneyPaise.formatCurrency(lentTotal, curr, stealth, mask),
+                        label = "Lent",
+                        valueColor = palette.textPrimary,
+                        palette = palette,
+                        modifier = Modifier.weight(1f).fillMaxHeight().testTag("quick_stat_lent"),
+                        onClick = { onNavigate("people") }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    QuickStatGlassCard(
+                        iconType = QuickStatIconType.NET_WORTH,
+                        valueText = MoneyPaise.formatCurrency(netWorth, curr, stealth, mask),
+                        label = "Net Worth",
+                        valueColor = if (netWorth >= 0.0) palette.primary else Color(0xFFFB7185),
+                        palette = palette,
+                        modifier = Modifier.weight(1f).fillMaxHeight().testTag("quick_stat_net_worth"),
+                        onClick = { onNavigate("financial_xray") }
+                    )
+                    QuickStatGlassCard(
+                        iconType = QuickStatIconType.TRANSACTIONS,
+                        valueText = state.transactions.size.toString(),
+                        label = "Transactions",
+                        valueColor = palette.textPrimary,
+                        palette = palette,
+                        modifier = Modifier.weight(1f).fillMaxHeight().testTag("quick_stat_transactions"),
+                        onClick = { onNavigate("transactions") }
                     )
                 }
             }

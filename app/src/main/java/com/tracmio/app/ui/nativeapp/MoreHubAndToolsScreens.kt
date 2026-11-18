@@ -479,7 +479,7 @@ fun InAppGuideScreen(
         listOf(
             Triple("🏠 Home & Quick Spend", "Check Net Balance, Monthly Pace, Safe-to-Spend Today, and tap chips to log instant expenses.", "dashboard"),
             Triple("🏦 Accounts & Allocations", "Create Bank, Cash, Wallet, or Credit Card accounts. Use 1-Tap ATM withdrawal, Auto-Split %, and >30% CC utilization alerts.", "accounts"),
-            Triple("🧾 Transactions & Hashtags", "Use Top-Left Filter for Account/Date, #hashtags for trip/event totals, Half-Cash + Half-UPI Split, and 1-Tap Repeat (↻).", "transactions"),
+            Triple("🧾 Transactions & Hashtags", "Search notes/categories/UPI, use Top-Left Filter for Account/Date, #hashtags for event totals, Half-Cash + Half-UPI Split, and 1-Tap Repeat (↻).", "transactions"),
             Triple("💵 3-Step Cash Counter", "Count physical notes (₹500–₹10) and coins (₹20–₹1) and reconcile directly into Cash Wallet.", "cash_counter")
         ) + ALL_TOOLS_CATALOG.map {
             Triple("${it.emoji} ${it.title}", it.subtitle, it.route)

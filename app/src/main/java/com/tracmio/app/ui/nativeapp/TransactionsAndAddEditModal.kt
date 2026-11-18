@@ -11,6 +11,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -42,6 +45,7 @@ fun TransactionsListScreen(
     val mask = settings.privacyMaskActive
     val stealth = settings.stealthModeActive
 
+    var searchQuery by remember { mutableStateOf("") }
     var showFilterPanel by remember { mutableStateOf(false) }
     var selectedAccountId by remember { mutableStateOf<Long?>(null) }
     var quickDateRange by remember { mutableStateOf("All dates") }
@@ -49,11 +53,24 @@ fun TransactionsListScreen(
     var toDateText by remember { mutableStateOf("") }
     var selectedHashtag by remember { mutableStateOf<String?>(null) }
 
+    val accountNamesById = remember(state.accounts) {
+        state.accounts.associate { it.id to it.name }
+    }
+
     val hashtagSummaries = remember(state.transactions) {
         NativeLedgerCalculator.summarizeHashtags(state.transactions)
     }
 
-    val filteredList = remember(state.transactions, selectedAccountId, quickDateRange, fromDateText, toDateText, selectedHashtag) {
+    val filteredList = remember(
+        state.transactions,
+        accountNamesById,
+        searchQuery,
+        selectedAccountId,
+        quickDateRange,
+        fromDateText,
+        toDateText,
+        selectedHashtag
+    ) {
         val now = System.currentTimeMillis()
         val monthStartMillis = Calendar.getInstance().apply {
             timeInMillis = now
@@ -74,6 +91,7 @@ fun TransactionsListScreen(
         val df = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val fromMillis = fromDateText.trim().takeIf { it.length == 10 }?.let { runCatching { df.parse(it)?.time }.getOrNull() }
         val toMillis = toDateText.trim().takeIf { it.length == 10 }?.let { runCatching { df.parse(it)?.time?.plus(86_399_999L) }.getOrNull() }
+        val cleanQuery = searchQuery.trim()
         state.transactions.filter { tx ->
             val accMatch = selectedAccountId == null || tx.accountId == selectedAccountId
             val dateMatch = when (quickDateRange) {
@@ -88,7 +106,18 @@ fun TransactionsListScreen(
             val tagMatch = selectedHashtag == null ||
                 tx.hashtags.contains(selectedHashtag!!, ignoreCase = true) ||
                 tx.note.contains(selectedHashtag!!, ignoreCase = true)
-            accMatch && dateMatch && customFromMatch && customToMatch && tagMatch
+            val accName = accountNamesById[tx.accountId].orEmpty()
+            val queryMatch = cleanQuery.isEmpty() ||
+                tx.category.contains(cleanQuery, ignoreCase = true) ||
+                tx.subcategory.contains(cleanQuery, ignoreCase = true) ||
+                tx.note.contains(cleanQuery, ignoreCase = true) ||
+                tx.hashtags.contains(cleanQuery, ignoreCase = true) ||
+                tx.paymentMethod.contains(cleanQuery, ignoreCase = true) ||
+                tx.upiApp.contains(cleanQuery, ignoreCase = true) ||
+                tx.type.contains(cleanQuery, ignoreCase = true) ||
+                accName.contains(cleanQuery, ignoreCase = true) ||
+                tx.amount.toString().contains(cleanQuery)
+            accMatch && dateMatch && customFromMatch && customToMatch && tagMatch && queryMatch
         }
     }
 
@@ -107,12 +136,59 @@ fun TransactionsListScreen(
                 Button(
                     onClick = { showFilterPanel = !showFilterPanel },
                     colors = ButtonDefaults.buttonColors(containerColor = palette.surfaceElevated),
-                    shape = RoundedCornerShape(16.dp)
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.testTag("transactions_filter_button")
                 ) {
                     Text(if (showFilterPanel) "▼ Filter" else "⚙️ Filter", color = palette.primary, fontWeight = FontWeight.ExtraBold)
                 }
                 Text("Transactions Ledger", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
             }
+        }
+
+        // Inline Search Input (replaces removed topbar search button while keeping full ledger search)
+        item {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = {
+                    Text(
+                        "Search notes, categories, #tags, UPI, amounts...",
+                        color = palette.textSecondary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search transactions",
+                        tint = palette.primary
+                    )
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear search",
+                                tint = palette.textSecondary
+                            )
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = palette.primary,
+                    unfocusedBorderColor = palette.surfaceBorder,
+                    focusedContainerColor = palette.surface.copy(alpha = 0.72f),
+                    unfocusedContainerColor = palette.surface.copy(alpha = 0.56f),
+                    focusedTextColor = palette.textPrimary,
+                    unfocusedTextColor = palette.textPrimary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("transactions_search_input")
+            )
         }
 
         if (showFilterPanel) {
