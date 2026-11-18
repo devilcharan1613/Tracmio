@@ -112,5 +112,7 @@ data class NativeTracmioUiState(
     val pendingNotificationAction: String? = null,
     val pinnedToolIds: List<String> = emptyList(),
     val dailyReminderEnabled: Boolean = false,
+    val dailyReminderHour: Int = 21,
+    val dailyReminderMinute: Int = 0,
     val monthlyBackupEnabled: Boolean = false
 )

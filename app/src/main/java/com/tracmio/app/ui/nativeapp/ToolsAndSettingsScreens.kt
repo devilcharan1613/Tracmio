@@ -456,9 +456,20 @@ fun RemindersAndWarrantyScreen(
         } else {
             item {
                 LiquidGlassComponents(settings = settings, palette = palette) {
+                    val remHour = state.dailyReminderHour
+                    val remMinute = state.dailyReminderMinute
+                    val formattedRemTime = remember(remHour, remMinute) {
+                        val h12 = when {
+                            remHour == 0 -> 12
+                            remHour > 12 -> remHour - 12
+                            else -> remHour
+                        }
+                        val amPm = if (remHour < 12) "AM" else "PM"
+                        "%d:%02d %s".format(h12, remMinute, amPm)
+                    }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("🌙 9:00 PM Daily Expense Check-In", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                            Text("🌙 $formattedRemTime Daily Expense Check-In", fontWeight = FontWeight.ExtraBold, color = palette.primary)
                             Text("Rotates 100 local messages with + Income / + Expense quick actions", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
                         }
                         Switch(
@@ -468,7 +479,7 @@ fun RemindersAndWarrantyScreen(
                                 if (enabled && !hostCallbacks.hasNotificationPermission()) {
                                     hostCallbacks.requestNotificationPermission()
                                 }
-                                hostCallbacks.scheduleDailyReminder(enabled, 21, 0, settings.userName)
+                                hostCallbacks.scheduleDailyReminder(enabled, remHour, remMinute, settings.userName)
                             }
                         )
                     }
@@ -1332,6 +1343,457 @@ fun AppLockOverlayScreen(
 }
 
 @Composable
+fun SettingsScreen(
+    state: NativeTracmioUiState,
+    settings: LiquidGlassSettings,
+    palette: ThemePalette,
+    viewModel: NativeTracmioViewModel,
+    hostCallbacks: NativeHostCallbacks,
+    onBack: () -> Unit,
+    onNavigate: (String) -> Unit
+) {
+    var editName by remember(settings.userName) { mutableStateOf(settings.userName.ifBlank { "Charan" }) }
+    var editCurrency by remember(settings.currencySymbol) { mutableStateOf(settings.currencySymbol.ifBlank { "₹" }) }
+    var remHour by remember(state.dailyReminderHour) { mutableIntStateOf(state.dailyReminderHour) }
+    var remMinute by remember(state.dailyReminderMinute) { mutableIntStateOf(state.dailyReminderMinute) }
+
+    var resetConfirmStep by remember { mutableIntStateOf(0) } // 0 = hidden, 1 = warning, 2 = final confirm, 3 = pin gate
+    var resetPinInput by remember { mutableStateOf("") }
+    var resetPinError by remember { mutableStateOf<String?>(null) }
+
+    val hasNotifPerm = hostCallbacks.hasNotificationPermission()
+    val hasCameraPerm = hostCallbacks.hasCameraPermission()
+    val bioCap = hostCallbacks.getDeviceSecurityCapability()
+
+    val formattedTime = remember(remHour, remMinute) {
+        val h12 = when {
+            remHour == 0 -> 12
+            remHour > 12 -> remHour - 12
+            else -> remHour
+        }
+        val amPm = if (remHour < 12) "AM" else "PM"
+        "%d:%02d %s".format(h12, remMinute, amPm)
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().testTag("settings_screen"),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 108.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = onBack,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.testTag("settings_back_button")
+                ) {
+                    Text("← Back", color = palette.primary, fontWeight = FontWeight.ExtraBold)
+                }
+                Column {
+                    Text("Settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+                    Text("Profile, Alerts, Security, App Info & Vault", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                }
+            }
+        }
+
+        // 1. Profile & Currency
+        item {
+            LiquidGlassComponents(settings = settings, palette = palette) {
+                Text("👤 Profile & Currency", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                OutlinedTextField(
+                    value = editName,
+                    onValueChange = { editName = it },
+                    label = { Text("Display Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("settings_name_input")
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LiquidGlassSettings.ALLOWED_CURRENCIES.forEach { curr ->
+                        val sel = editCurrency == curr
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (sel) palette.primary.copy(alpha = 0.25f) else palette.surface)
+                                .border(1.2.dp, if (sel) palette.primary else palette.surfaceBorder, RoundedCornerShape(12.dp))
+                                .clickable { editCurrency = curr }
+                                .padding(vertical = 10.dp)
+                        ) {
+                            Text(curr, fontWeight = FontWeight.ExtraBold, color = if (sel) palette.primary else palette.textPrimary)
+                        }
+                    }
+                }
+                Button(
+                    onClick = {
+                        viewModel.updateSettings {
+                            it.copy(
+                                userName = editName.trim().ifBlank { "Charan" },
+                                currencySymbol = editCurrency.trim().ifBlank { "₹" }
+                            )
+                        }
+                        viewModel.postStatus("Profile & currency updated")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
+                    modifier = Modifier.fillMaxWidth().testTag("settings_save_profile_button")
+                ) {
+                    Text("Save Profile & Currency", color = palette.background, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+
+        // 2. Appearance & App Guide Shortcuts
+        item {
+            LiquidGlassComponents(settings = settings, palette = palette) {
+                Text("✨ Appearance & Documentation", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { onNavigate("themes") },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.weight(1f).testTag("settings_open_themes_button")
+                    ) {
+                        Text("🎨 UI Studio", color = palette.primary, fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = { onNavigate("guide") },
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.weight(1f).testTag("settings_open_guide_button")
+                    ) {
+                        Text("📘 App Guide", color = palette.textPrimary, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // 3. Offline Daily Reminder & Custom Schedule
+        item {
+            LiquidGlassComponents(settings = settings, palette = palette) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("⏰ Daily Expense Check-In", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                        Text("Scheduled locally at $formattedTime", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                    }
+                    Switch(
+                        checked = state.dailyReminderEnabled,
+                        onCheckedChange = { enabled ->
+                            viewModel.setDailyReminderConfig(enabled, remHour, remMinute)
+                            if (enabled && !hasNotifPerm) {
+                                hostCallbacks.requestNotificationPermission()
+                            }
+                            hostCallbacks.scheduleDailyReminder(enabled, remHour, remMinute, settings.userName)
+                        }
+                    )
+                }
+
+                // Custom Hour & Minute Steppers + Quick Time Presets
+                Row(
+                    modifier = Modifier.fillMaxWidth().testTag("settings_reminder_time_row"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(palette.surface)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Hr", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                        Text(
+                            "−",
+                            color = palette.primary,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier
+                                .clickable { remHour = (remHour + 23) % 24 }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("settings_rem_hour_minus")
+                        )
+                        Text(remHour.toString().padStart(2, '0'), fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+                        Text(
+                            "+",
+                            color = palette.primary,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier
+                                .clickable { remHour = (remHour + 1) % 24 }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("settings_rem_hour_plus")
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(palette.surface)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Min", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                        Text(
+                            "−",
+                            color = palette.primary,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier
+                                .clickable { remMinute = (remMinute + 45) % 60 }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                        Text(remMinute.toString().padStart(2, '0'), fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+                        Text(
+                            "+",
+                            color = palette.primary,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier
+                                .clickable { remMinute = (remMinute + 15) % 60 }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = {
+                            if (!hasNotifPerm) hostCallbacks.requestNotificationPermission()
+                            viewModel.setDailyReminderConfig(true, remHour, remMinute)
+                            hostCallbacks.scheduleDailyReminder(true, remHour, remMinute, settings.userName)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
+                        modifier = Modifier.weight(1f).testTag("settings_save_reminder_time_button")
+                    ) {
+                        Text("Save $formattedTime", color = palette.background, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            if (!hasNotifPerm) hostCallbacks.requestNotificationPermission()
+                            hostCallbacks.dispatchTestReminder()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("🔔 Preview", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+
+                HorizontalDivider(color = palette.surfaceBorder)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("💾 Monthly Backup Reminder", fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                        Text("1st of every month at 8:00 PM", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                    }
+                    Switch(
+                        checked = state.monthlyBackupEnabled,
+                        onCheckedChange = { enabled ->
+                            viewModel.setMonthlyBackupEnabled(enabled)
+                            if (enabled && !hasNotifPerm) hostCallbacks.requestNotificationPermission()
+                            hostCallbacks.scheduleMonthlyBackupReminder(enabled, 1, 20, 0)
+                        }
+                    )
+                }
+            }
+        }
+
+        // 4. Permissions & Security Controls
+        item {
+            LiquidGlassComponents(settings = settings, palette = palette) {
+                Text("🛡️ Device Permissions & Security", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Notifications: ${if (hasNotifPerm) "Granted ✓" else "Not Granted"}", style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
+                    if (!hasNotifPerm) {
+                        TextButton(onClick = { hostCallbacks.requestNotificationPermission() }) {
+                            Text("Enable", color = palette.primary, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                Text("Camera / Receipt Capture: ${if (hasCameraPerm) "Granted ✓" else "On-Demand (Zero Storage Perm)"}", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                Text("Biometric Hardware: ${bioCap.name}", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { onNavigate("app_lock") }, modifier = Modifier.weight(1f)) {
+                        Text(if (state.appLockState.isEnabled) "🔐 App Lock ON" else "🔐 App Lock", color = palette.primary, fontSize = 12.sp)
+                    }
+                    OutlinedButton(onClick = { onNavigate("permissions") }, modifier = Modifier.weight(1f)) {
+                        Text("🩺 Security Audit", color = palette.textPrimary, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        // 5. Data Management & Reset Vault
+        item {
+            LiquidGlassComponents(settings = settings, palette = palette) {
+                Text("💾 Data Management & Vault Reset", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    Button(
+                        onClick = { onNavigate("data_export") },
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.surfaceElevated),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Backups & Exports", color = palette.primary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { hostCallbacks.exportPlainJsonBackup("tracmio_backup_16.13.json") },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Quick JSON Export", color = palette.textPrimary, fontSize = 12.sp)
+                    }
+                }
+                OutlinedButton(
+                    onClick = { resetConfirmStep = 1 },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFB7185)),
+                    modifier = Modifier.fillMaxWidth().testTag("settings_reset_all_data_button")
+                ) {
+                    Text("🗑️ Reset All Data", color = Color(0xFFFB7185), fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+
+        // 6. Privacy Guarantee & Live App Info
+        item {
+            LiquidGlassComponents(settings = settings, palette = palette) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TracmioBrandBadge(sizeDp = 44.dp, accent = palette.primary)
+                    Column {
+                        Text("Tracmio Offline Vault · v16.13", fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+                        Text("100% Local SQLCipher AES + Android Keystore", style = MaterialTheme.typography.labelSmall, color = Color(0xFF34D399), fontWeight = FontWeight.Bold)
+                    }
+                }
+                HorizontalDivider(color = palette.surfaceBorder)
+                Text(
+                    "Accounts: ${state.accounts.size} · Transactions: ${state.transactions.size} · People: ${state.persons.size} · Trackers: ${state.customTrackers.size}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.textPrimary,
+                    modifier = Modifier.testTag("settings_live_counts_text")
+                )
+                Text(
+                    "Zero Network Permissions · Zero Telemetry · Build 16.13 (30)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textSecondary
+                )
+            }
+        }
+    }
+
+    if (resetConfirmStep == 1) {
+        AlertDialog(
+            onDismissRequest = { resetConfirmStep = 0 },
+            containerColor = palette.surfaceElevated,
+            title = { Text("⚠️ Reset All Vault Data?", fontWeight = FontWeight.ExtraBold, color = Color(0xFFFB7185)) },
+            text = {
+                Text(
+                    "This permanently erases all local accounts, transactions, budgets, loans, goals, reminders, and custom chips. Export a JSON backup first if you want to keep a copy.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.textPrimary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { resetConfirmStep = 2 },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFB7185)),
+                    modifier = Modifier.testTag("settings_reset_step1_confirm")
+                ) {
+                    Text("Continue", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetConfirmStep = 0 }) {
+                    Text("Cancel", color = palette.textSecondary)
+                }
+            }
+        )
+    }
+
+    if (resetConfirmStep == 2) {
+        AlertDialog(
+            onDismissRequest = { resetConfirmStep = 0 },
+            containerColor = palette.surfaceElevated,
+            title = { Text("🚨 Final Confirmation", fontWeight = FontWeight.ExtraBold, color = Color(0xFFFB7185)) },
+            text = {
+                Text(
+                    "Are you completely sure? All encrypted records will be wiped and starter Cash & Bank accounts restored.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.textPrimary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (state.appLockState.isEnabled) {
+                            resetPinInput = ""
+                            resetPinError = null
+                            resetConfirmStep = 3
+                        } else {
+                            viewModel.resetAllVaultData()
+                            resetConfirmStep = 0
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFB7185)),
+                    modifier = Modifier.testTag("settings_reset_step2_confirm")
+                ) {
+                    Text("Wipe & Reset Vault", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetConfirmStep = 0 }) {
+                    Text("Cancel", color = palette.textSecondary)
+                }
+            }
+        )
+    }
+
+    if (resetConfirmStep == 3) {
+        AlertDialog(
+            onDismissRequest = { resetConfirmStep = 0 },
+            containerColor = palette.surfaceElevated,
+            title = { Text("🔐 Verify App Lock PIN", fontWeight = FontWeight.ExtraBold, color = palette.textPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Enter your current PIN to authorize complete vault wipe.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
+                    OutlinedTextField(
+                        value = resetPinInput,
+                        onValueChange = { if (it.length <= 6 && it.all(Char::isDigit)) resetPinInput = it },
+                        label = { Text("Current PIN") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    resetPinError?.let { Text(it, color = Color(0xFFFB7185), style = MaterialTheme.typography.labelSmall) }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (viewModel.verifyCurrentPinForSensitiveAction(resetPinInput)) {
+                            viewModel.resetAllVaultData()
+                            resetConfirmStep = 0
+                        } else {
+                            resetPinError = "Incorrect PIN"
+                            resetPinInput = ""
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFB7185))
+                ) {
+                    Text("Confirm Wipe", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetConfirmStep = 0 }) {
+                    Text("Cancel", color = palette.textSecondary)
+                }
+            }
+        )
+    }
+}
+
+@Composable
 fun ThemesStudioScreen(
     settings: LiquidGlassSettings,
     palette: ThemePalette,
@@ -1339,6 +1801,9 @@ fun ThemesStudioScreen(
     hostCallbacks: NativeHostCallbacks,
     onBack: () -> Unit
 ) {
+    var primaryHexInput by remember(settings.customPrimaryHex) { mutableStateOf(settings.customPrimaryHex) }
+    var secondaryHexInput by remember(settings.customSecondaryHex) { mutableStateOf(settings.customSecondaryHex) }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("themes_studio_screen"),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 108.dp),
@@ -1353,7 +1818,70 @@ fun ThemesStudioScreen(
             }
         }
 
-        // 10 Themes
+        // Live Appearance Preview Card
+        item {
+            GlassCard(
+                settings = settings,
+                shape = RoundedCornerShape(24.dp),
+                borderColor = palette.primary.copy(alpha = 0.6f),
+                modifier = Modifier.fillMaxWidth().testTag("themes_live_preview_card")
+            ) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    HeroAuroraWaveBackdrop(
+                        isLight = palette.isLight,
+                        primary = palette.primary,
+                        secondary = palette.secondary,
+                        modifier = Modifier.matchParentSize()
+                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TracmioBrandBadge(sizeDp = 34.dp, accent = palette.primary)
+                                Column {
+                                    Text("LIVE STUDIO PREVIEW", style = MaterialTheme.typography.labelSmall, color = palette.primary, fontWeight = FontWeight.ExtraBold)
+                                    Text("${palette.displayName} · ${ThemePresets.GLASS_UI_STYLES.firstOrNull { it.first == settings.glassUiStyle }?.second ?: "Classic"}", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                                }
+                            }
+                            Surface(shape = RoundedCornerShape(10.dp), color = palette.primary.copy(alpha = 0.22f)) {
+                                Text(
+                                    "Anim ${settings.animationStyle}",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = palette.primary,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                        Text(
+                            "${settings.currencySymbol}42,850",
+                            style = MaterialTheme.typography.headlineSmall.copy(fontFeatureSettings = "tnum"),
+                            fontWeight = FontWeight.ExtraBold,
+                            color = palette.textPrimary
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Surface(shape = RoundedCornerShape(12.dp), color = palette.surfaceElevated) {
+                                Text("+ Income", modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), style = MaterialTheme.typography.labelSmall, color = palette.primary, fontWeight = FontWeight.Bold)
+                            }
+                            Surface(shape = RoundedCornerShape(12.dp), color = palette.surfaceElevated) {
+                                Text("Scale ${(settings.uiScale * 100).toInt()}%", modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), style = MaterialTheme.typography.labelSmall, color = palette.textPrimary, fontWeight = FontWeight.Bold)
+                            }
+                            Surface(shape = RoundedCornerShape(12.dp), color = palette.surfaceElevated) {
+                                Text("Blur ${settings.wallpaperBlurDp.toInt()}px", modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), style = MaterialTheme.typography.labelSmall, color = palette.secondary, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 11 Themes (10 Presets + Custom Neon)
         item {
             LiquidGlassComponents(settings = settings, palette = palette) {
                 Text("🎨 Color Themes (${ThemePresets.ALL_THEMES.size} Presets)", fontWeight = FontWeight.ExtraBold, color = palette.primary)
@@ -1367,11 +1895,71 @@ fun ThemesStudioScreen(
                                 .border(if (sel) 2.dp else 1.dp, if (sel) t.primary else t.surfaceBorder, RoundedCornerShape(14.dp))
                                 .clickable { viewModel.updateSettings { it.copy(themePreset = t.id) } }
                                 .padding(horizontal = 12.dp, vertical = 10.dp)
+                                .testTag("theme_preset_${t.id}")
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Box(modifier = Modifier.size(12.dp).clip(CircleShape).background(t.primary))
                                 Text(t.displayName, style = MaterialTheme.typography.labelSmall, color = t.textPrimary, fontWeight = FontWeight.Bold)
                             }
+                        }
+                    }
+                }
+
+                if (settings.themePreset == "custom") {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp).testTag("themes_custom_color_pickers"),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Custom Neon Dual Accent Picker", style = MaterialTheme.typography.labelMedium, color = palette.primary, fontWeight = FontWeight.Bold)
+                        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf(
+                                Triple("Cyber Cyan", "#00F5D4", "#A855F7"),
+                                Triple("Solar Pink", "#FB7185", "#FBBF24"),
+                                Triple("Mint Electric", "#34D399", "#38BDF8"),
+                                Triple("Neon Gold", "#F5A623", "#00F5D4")
+                            ).forEach { (label, pHex, sHex) ->
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = palette.surfaceElevated,
+                                    modifier = Modifier.clickable {
+                                        primaryHexInput = pHex
+                                        secondaryHexInput = sHex
+                                        viewModel.updateSettings { it.copy(customPrimaryHex = pHex, customSecondaryHex = sHex) }
+                                    }
+                                ) {
+                                    Text(label, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelSmall, color = palette.textPrimary, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = primaryHexInput,
+                                onValueChange = { primaryHexInput = it },
+                                label = { Text("Primary Hex") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            OutlinedTextField(
+                                value = secondaryHexInput,
+                                onValueChange = { secondaryHexInput = it },
+                                label = { Text("Secondary Hex") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                viewModel.updateSettings {
+                                    it.copy(
+                                        customPrimaryHex = primaryHexInput.trim().ifBlank { "#00F5D4" },
+                                        customSecondaryHex = secondaryHexInput.trim().ifBlank { "#A855F7" }
+                                    )
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Apply Custom Neon Colors", color = palette.background, fontWeight = FontWeight.ExtraBold)
                         }
                     }
                 }
@@ -1393,6 +1981,32 @@ fun ThemesStudioScreen(
                                 .padding(horizontal = 12.dp, vertical = 8.dp)
                         ) {
                             Text(label, style = MaterialTheme.typography.labelSmall, color = if (sel) palette.background else palette.textPrimary, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 10 Animation Styles (anim1 - anim10)
+        item {
+            LiquidGlassComponents(settings = settings, palette = palette) {
+                Text("🌀 Screen & Transition Animations (${ThemePresets.ANIMATION_STYLES.size})", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag("themes_anim_style_selector"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ThemePresets.ANIMATION_STYLES.forEach { (id, label) ->
+                        val sel = settings.animationStyle == id
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (sel) palette.primary else palette.surface)
+                                .border(1.dp, if (sel) palette.primary else palette.surfaceBorder, RoundedCornerShape(12.dp))
+                                .clickable { viewModel.updateSettings { it.copy(animationStyle = id) } }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .testTag("anim_style_$id")
+                        ) {
+                            Text("$id. $label", style = MaterialTheme.typography.labelSmall, color = if (sel) palette.background else palette.textPrimary, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1426,10 +2040,18 @@ fun ThemesStudioScreen(
                         Text("📷 Camera", color = palette.textPrimary)
                     }
                 }
+                if (!settings.customWallpaperPath.isNullOrBlank()) {
+                    OutlinedButton(
+                        onClick = { viewModel.removeCustomWallpaper() },
+                        modifier = Modifier.fillMaxWidth().testTag("themes_remove_wallpaper_button")
+                    ) {
+                        Text("✕ Remove Custom Photo", color = Color(0xFFFB7185), fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
 
-        // Apple-style Capsule Sliders +1/-1 + Sensor Parallax
+        // Apple-style Capsule Sliders +1/-1 + Sensor Parallax + Replay Welcome
         item {
             LiquidGlassComponents(settings = settings, palette = palette) {
                 Text("🎛️ Glass Optics & UI Scale", fontWeight = FontWeight.ExtraBold, color = palette.primary)
@@ -1443,6 +2065,18 @@ fun ThemesStudioScreen(
                     onStepMinus = { viewModel.updateSettings { it.copy(backgroundVisibility = (it.backgroundVisibility - 0.01f).coerceAtLeast(0.05f)) } },
                     onStepPlus = { viewModel.updateSettings { it.copy(backgroundVisibility = (it.backgroundVisibility + 0.01f).coerceAtMost(1.0f)) } }
                 )
+                Box(modifier = Modifier.testTag("themes_wallpaper_blur_slider")) {
+                    LiquidCapsuleSlider(
+                        label = "Wallpaper Frosted Blur",
+                        value = settings.wallpaperBlurDp,
+                        valueRange = 0f..32f,
+                        displayText = "${settings.wallpaperBlurDp.toInt()}px",
+                        palette = palette,
+                        onValueChange = { v -> viewModel.updateSettings { it.copy(wallpaperBlurDp = v) } },
+                        onStepMinus = { viewModel.updateSettings { it.copy(wallpaperBlurDp = (it.wallpaperBlurDp - 1f).coerceAtLeast(0f)) } },
+                        onStepPlus = { viewModel.updateSettings { it.copy(wallpaperBlurDp = (it.wallpaperBlurDp + 1f).coerceAtMost(32f)) } }
+                    )
+                }
                 LiquidCapsuleSlider(
                     label = "Aurora Glow Intensity",
                     value = settings.glowIntensity,
@@ -1472,6 +2106,13 @@ fun ThemesStudioScreen(
                         checked = settings.deviceMotionEnabled,
                         onCheckedChange = { enabled -> viewModel.updateSettings { it.copy(deviceMotionEnabled = enabled) } }
                     )
+                }
+                OutlinedButton(
+                    onClick = { viewModel.triggerReplayWelcome() },
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("themes_replay_welcome_button")
+                ) {
+                    Text("✨ Replay Welcome & Logo Animation", color = palette.primary, fontWeight = FontWeight.ExtraBold)
                 }
             }
         }

@@ -58,7 +58,10 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     private val appLockStateFlow = MutableStateFlow(appLockManager.getState())
     private val pendingNotificationActionFlow = MutableStateFlow<String?>(null)
     private val dailyReminderEnabledFlow = MutableStateFlow(prefsStore.isDailyReminderEnabled())
+    private val dailyReminderTimeFlow = MutableStateFlow(prefsStore.getDailyReminderTime())
     private val monthlyBackupEnabledFlow = MutableStateFlow(prefsStore.isMonthlyBackupEnabled())
+    private val replayWelcomeFlow = MutableStateFlow(false)
+    val replayWelcome: StateFlow<Boolean> = replayWelcomeFlow.asStateFlow()
 
     private val pendingBackupPreviewFlow = MutableStateFlow<PendingBackupPreview?>(null)
     val pendingBackupPreview: StateFlow<PendingBackupPreview?> = pendingBackupPreviewFlow.asStateFlow()
@@ -138,14 +141,27 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         UiFlagsSnapshot(msg, delTx, delChip, locked, lockState)
     }
 
+    private val dailyReminderCombinedFlow = combine(
+        dailyReminderEnabledFlow,
+        dailyReminderTimeFlow
+    ) { enabled, time -> Triple(enabled, time.first, time.second) }
+
     private val auxFlagsFlow = combine(
         vaultStateFlow,
         pinnedToolIdsFlow,
         pendingNotificationActionFlow,
-        dailyReminderEnabledFlow,
+        dailyReminderCombinedFlow,
         monthlyBackupEnabledFlow
-    ) { vaultState, pinned, action, dailyRem, monthlyBackup ->
-        AuxFlagsSnapshot(vaultState, pinned, action, dailyRem, monthlyBackup)
+    ) { vaultState, pinned, action, dailyRemTriple, monthlyBackup ->
+        AuxFlagsSnapshot(
+            vaultInitState = vaultState,
+            pinnedToolIds = pinned,
+            pendingNotificationAction = action,
+            dailyReminderEnabled = dailyRemTriple.first,
+            dailyReminderHour = dailyRemTriple.second,
+            dailyReminderMinute = dailyRemTriple.third,
+            monthlyBackupEnabled = monthlyBackup
+        )
     }
 
     val uiState: StateFlow<NativeTracmioUiState> = combine(
@@ -207,6 +223,8 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
             pendingNotificationAction = aux.pendingNotificationAction,
             pinnedToolIds = aux.pinnedToolIds,
             dailyReminderEnabled = aux.dailyReminderEnabled,
+            dailyReminderHour = aux.dailyReminderHour,
+            dailyReminderMinute = aux.dailyReminderMinute,
             monthlyBackupEnabled = aux.monthlyBackupEnabled
         )
     }.stateIn(
@@ -220,6 +238,8 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
             appLockState = appLockStateFlow.value,
             pinnedToolIds = pinnedToolIdsFlow.value,
             dailyReminderEnabled = dailyReminderEnabledFlow.value,
+            dailyReminderHour = dailyReminderTimeFlow.value.first,
+            dailyReminderMinute = dailyReminderTimeFlow.value.second,
             monthlyBackupEnabled = monthlyBackupEnabledFlow.value
         )
     )
@@ -299,6 +319,12 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     private fun isValidNonNegativeAmount(v: Double): Boolean = v.isFinite() && v >= 0.0
 
     fun updateSettings(transform: (LiquidGlassSettings) -> LiquidGlassSettings) = prefsStore.updateSettings(transform)
+    fun removeCustomWallpaper() {
+        prefsStore.updateSettings { it.copy(customWallpaperPath = null) }
+        statusMessageFlow.value = "Removed custom wallpaper photo"
+    }
+    fun triggerReplayWelcome() { replayWelcomeFlow.value = true }
+    fun dismissReplayWelcome() { replayWelcomeFlow.value = false }
     fun togglePrivacyMask() = prefsStore.updatePrivacyMask(!settingsFlow.value.privacyMaskActive)
     fun toggleStealthMode() = prefsStore.updateStealthMode(!settingsFlow.value.stealthModeActive)
     fun toggleRoundUp(enabled: Boolean) = prefsStore.updateSettings { it.copy(roundUpEnabled = enabled) }
@@ -1018,6 +1044,76 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun saveSmartSplit(
+        totalBill: Double,
+        headCount: Int,
+        includeOwnShare: Boolean,
+        splitNote: String,
+        targetPersonNames: List<String>
+    ) {
+        if (!isValidPositiveAmount(totalBill) || headCount <= 0) {
+            statusMessageFlow.value = "Enter a valid bill total and people count"
+            return
+        }
+        val repo = requireRepo() ?: return
+        val shareCount = if (includeOwnShare) (headCount - 1).coerceAtLeast(1) else headCount
+        val perPerson = MoneyPaise.roundRupees(totalBill / headCount.toDouble())
+        val cleanNames = targetPersonNames
+            .map { TracmioSecurityEngine.sanitizeInput(it, 60) }
+            .filter { it.isNotBlank() }
+        val resolvedNames = if (cleanNames.isNotEmpty()) {
+            cleanNames
+        } else {
+            listOf("Split Group ($shareCount people)")
+        }
+        val cleanTitle = TracmioSecurityEngine.sanitizeInput(splitNote, 80).ifBlank { "Smart Split" }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val accId = repo.accounts.first().firstOrNull()?.id ?: 1L
+            val existingPeople = repo.persons.first()
+            val perRecipient = if (cleanNames.isNotEmpty()) {
+                perPerson
+            } else {
+                MoneyPaise.roundRupees(perPerson * shareCount)
+            }
+            repo.runInTransaction {
+                resolvedNames.forEach { personName ->
+                    repo.insertTransaction(
+                        TransactionEntity(
+                            accountId = accId,
+                            type = "LEND",
+                            amount = perRecipient,
+                            amountPaise = MoneyPaise.toPaise(perRecipient),
+                            category = "Smart Split",
+                            subcategory = "Person: $personName",
+                            paymentMethod = "UPI",
+                            note = "⚡ $cleanTitle · Split with $personName"
+                        )
+                    )
+                    val matched = existingPeople.firstOrNull { it.name.equals(personName, ignoreCase = true) }
+                    if (matched != null) {
+                        val updatedBal = MoneyPaise.roundRupees(matched.netBalance + perRecipient)
+                        repo.updatePerson(
+                            matched.copy(
+                                netBalance = updatedBal,
+                                netBalancePaise = MoneyPaise.toPaise(updatedBal)
+                            )
+                        )
+                    } else {
+                        repo.insertPerson(
+                            PersonEntity(
+                                name = personName,
+                                netBalance = perRecipient,
+                                netBalancePaise = MoneyPaise.toPaise(perRecipient)
+                            )
+                        )
+                    }
+                }
+            }
+            statusMessageFlow.value = "Saved Smart Split (${settingsFlow.value.currencySymbol}${"%,.0f".format(perRecipient * resolvedNames.size)} lent)"
+        }
+    }
+
     fun addKhataEntry(shopOrFriend: String, itemDescription: String, amount: Double) {
         val cleanShop = TracmioSecurityEngine.sanitizeInput(shopOrFriend, 60)
         if (cleanShop.isBlank() || !isValidPositiveAmount(amount)) {
@@ -1369,13 +1465,65 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun setDailyReminderEnabled(enabled: Boolean) {
+        val (curHour, curMin) = dailyReminderTimeFlow.value
+        setDailyReminderConfig(enabled, curHour, curMin)
+    }
+
+    fun setDailyReminderConfig(enabled: Boolean, hour: Int, minute: Int) {
+        val safeHour = hour.coerceIn(0, 23)
+        val safeMinute = minute.coerceIn(0, 59)
         dailyReminderEnabledFlow.value = enabled
-        prefsStore.saveDailyReminderConfig(enabled, 21, 0)
+        dailyReminderTimeFlow.value = safeHour to safeMinute
+        prefsStore.saveDailyReminderConfig(enabled, safeHour, safeMinute)
     }
 
     fun setMonthlyBackupEnabled(enabled: Boolean) {
         monthlyBackupEnabledFlow.value = enabled
         prefsStore.saveMonthlyBackupEnabled(enabled)
+    }
+
+    fun resetAllVaultData(onComplete: () -> Unit = {}) {
+        val repo = requireRepo() ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            repo.clearAllTablesForReset()
+            val defaultChips = listOf(
+                QuickSpendChip("q1", "☕", "Tea", 20.0, "Food & Chai"),
+                QuickSpendChip("q2", "🚌", "Auto", 50.0, "Transport & Travel"),
+                QuickSpendChip("q3", "🍽️", "Lunch", 120.0, "Food & Chai"),
+                QuickSpendChip("q4", "📱", "Recharge", 199.0, "SIM, WiFi & Bills")
+            )
+            quickChipsFlow.value = defaultChips
+            prefsStore.saveQuickSpendChips(defaultChips)
+            pendingRefundsFlow.value = emptyList()
+            prefsStore.savePendingRefunds(emptyList())
+            pinnedToolIdsFlow.value = emptyList()
+            prefsStore.savePinnedToolIds(emptyList())
+            deletedTxFlow.value = null
+            deletedPairTxFlow.value = emptyList()
+            deletedChipFlow.value = null
+            repo.insertAccount(
+                AccountEntity(
+                    name = "Cash Wallet",
+                    accountType = "Wallet",
+                    balance = 0.0,
+                    balancePaise = 0L,
+                    colorHex = "#00F5D4"
+                )
+            )
+            repo.insertAccount(
+                AccountEntity(
+                    name = "Primary Bank",
+                    accountType = "Bank",
+                    balance = 0.0,
+                    balancePaise = 0L,
+                    colorHex = "#38BDF8"
+                )
+            )
+            statusMessageFlow.value = "All vault data cleared cleanly"
+            withContext(Dispatchers.Main) {
+                onComplete()
+            }
+        }
     }
 
     fun addCustomTracker(title: String, type: String, target: Double) {
@@ -1804,6 +1952,8 @@ class NativeTracmioViewModel(application: Application) : AndroidViewModel(applic
         val pinnedToolIds: List<String>,
         val pendingNotificationAction: String?,
         val dailyReminderEnabled: Boolean,
+        val dailyReminderHour: Int,
+        val dailyReminderMinute: Int,
         val monthlyBackupEnabled: Boolean
     )
 }

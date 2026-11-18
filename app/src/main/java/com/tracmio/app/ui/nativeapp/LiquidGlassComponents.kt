@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -458,6 +459,10 @@ fun QuickStatGlassCard(
     valueColor: Color,
     palette: ThemePalette,
     modifier: Modifier = Modifier,
+    animatedAmount: Double? = null,
+    currencySymbol: String = "₹",
+    stealth: Boolean = false,
+    mask: Boolean = false,
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(22.dp)
@@ -497,13 +502,26 @@ fun QuickStatGlassCard(
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             QuickStatGlassBadge(type = iconType, sizeDp = 46.dp)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = valueText,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = valueColor,
-                    maxLines = 1
-                )
+                if (animatedAmount != null) {
+                    AnimatedCurrencyText(
+                        targetValue = animatedAmount,
+                        currencySymbol = currencySymbol,
+                        stealth = stealth,
+                        mask = mask,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = valueColor,
+                        maxLines = 1
+                    )
+                } else {
+                    Text(
+                        text = valueText,
+                        style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"),
+                        fontWeight = FontWeight.ExtraBold,
+                        color = valueColor,
+                        maxLines = 1
+                    )
+                }
                 Text(
                     text = label,
                     style = MaterialTheme.typography.bodySmall,
@@ -589,4 +607,37 @@ fun AuroraGlassSectionHeader(
         }
         trailing?.invoke()
     }
+}
+
+@androidx.compose.runtime.Composable
+fun AnimatedCurrencyText(
+    targetValue: Double,
+    currencySymbol: String,
+    stealth: Boolean,
+    mask: Boolean,
+    style: androidx.compose.ui.text.TextStyle,
+    color: Color,
+    fontWeight: FontWeight = FontWeight.ExtraBold,
+    fontSize: androidx.compose.ui.unit.TextUnit = androidx.compose.ui.unit.TextUnit.Unspecified,
+    maxLines: Int = 1,
+    modifier: Modifier = Modifier
+) {
+    val animatedVal by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = targetValue.toFloat(),
+        animationSpec = androidx.compose.animation.core.tween(
+            durationMillis = 380,
+            easing = androidx.compose.animation.core.CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+        ),
+        label = "currency_count_up"
+    )
+    val displayValue = if (kotlin.math.abs(animatedVal - targetValue.toFloat()) < 1f) targetValue else animatedVal.toDouble()
+    Text(
+        text = com.tracmio.app.data.MoneyPaise.formatCurrency(displayValue, currencySymbol, stealth, mask),
+        style = style.copy(fontFeatureSettings = "tnum"),
+        fontWeight = fontWeight,
+        fontSize = fontSize,
+        color = color,
+        maxLines = maxLines,
+        modifier = modifier
+    )
 }

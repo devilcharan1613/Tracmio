@@ -1,8 +1,11 @@
 package com.tracmio.app.ui.nativeapp
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,7 +22,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -39,6 +46,8 @@ fun TransactionsListScreen(
     settings: LiquidGlassSettings,
     palette: ThemePalette,
     viewModel: NativeTracmioViewModel,
+    initialSearchQuery: String = "",
+    onConsumeInitialSearchQuery: () -> Unit = {},
     onOpenReceipt: (TransactionEntity) -> Unit
 ) {
     val curr = settings.currencySymbol
@@ -46,6 +55,12 @@ fun TransactionsListScreen(
     val stealth = settings.stealthModeActive
 
     var searchQuery by remember { mutableStateOf("") }
+    LaunchedEffect(initialSearchQuery) {
+        if (initialSearchQuery.isNotBlank()) {
+            searchQuery = initialSearchQuery
+            onConsumeInitialSearchQuery()
+        }
+    }
     var showFilterPanel by remember { mutableStateOf(false) }
     var selectedAccountId by remember { mutableStateOf<Long?>(null) }
     var quickDateRange by remember { mutableStateOf("All dates") }
@@ -434,6 +449,9 @@ fun AddEditTransactionSheet(
         NativeLedgerCalculator.parseAllocations(selectedAccount?.allocationsJson)
     }
 
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    val animatedDragY by animateFloatAsState(targetValue = dragOffsetY, label = "sheet_pull_dismiss")
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -445,6 +463,7 @@ fun AddEditTransactionSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.88f)
+                .graphicsLayer { translationY = animatedDragY.coerceAtLeast(0f) }
                 .clickable(enabled = false) {},
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             color = palette.surfaceElevated
@@ -454,23 +473,54 @@ fun AddEditTransactionSheet(
                     .fillMaxSize()
                     .navigationBarsPadding()
                     .imePadding()
-                    .padding(horizontal = 20.dp, vertical = 16.dp)
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                // Version 2.5 Interactive Pull-Down-to-Dismiss Drag Handle + Header
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(Unit) {
+                            detectVerticalDragGestures(
+                                onDragEnd = {
+                                    if (dragOffsetY > 140f) {
+                                        onDismiss()
+                                    } else {
+                                        dragOffsetY = 0f
+                                    }
+                                },
+                                onDragCancel = { dragOffsetY = 0f },
+                                onVerticalDrag = { _, dragAmount ->
+                                    dragOffsetY = (dragOffsetY + dragAmount).coerceAtLeast(0f)
+                                }
+                            )
+                        }
+                        .testTag("add_tx_sheet_drag_handle"),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        if (editingTransaction == null) "➕ Add Transaction" else "✏️ Edit Transaction",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = palette.textPrimary
+                    Box(
+                        modifier = Modifier
+                            .width(44.dp)
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(palette.textSecondary.copy(alpha = 0.45f))
                     )
-                    TextButton(onClick = onDismiss) {
-                        Text("✕ Close", color = palette.textSecondary, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            if (editingTransaction == null) "➕ Add Transaction" else "✏️ Edit Transaction",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = palette.textPrimary
+                        )
+                        TextButton(onClick = onDismiss) {
+                            Text("✕ Close", color = palette.textSecondary, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 
@@ -965,7 +1015,18 @@ fun ExpenseReceiptModal(
                     Text("🛡️ Warranty / Return Deadline: ${transaction.warrantyDate}", color = palette.primary, fontWeight = FontWeight.Bold)
                 }
 
-                Spacer(Modifier.height(6.dp))
+                // Version 2.5 subtle dashed receipt perforation tear line
+                Canvas(modifier = Modifier.fillMaxWidth().height(8.dp)) {
+                    drawLine(
+                        color = palette.surfaceBorder,
+                        start = Offset(0f, size.height / 2f),
+                        end = Offset(size.width, size.height / 2f),
+                        strokeWidth = 2f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f), 0f)
+                    )
+                }
+
+                Spacer(Modifier.height(2.dp))
                 // 1-Tap Receipt Repeat (↻)
                 Button(
                     onClick = { onRepeat(transaction) },

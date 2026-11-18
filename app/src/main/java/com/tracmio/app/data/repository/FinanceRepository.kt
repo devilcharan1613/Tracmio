@@ -72,6 +72,10 @@ class FinanceRepository(private val db: TracmioDatabase) {
 
     suspend fun <T> runInTransaction(block: suspend () -> T): T = db.withTransaction(block)
 
+    suspend fun clearAllTablesForReset() {
+        db.clearAllTables()
+    }
+
     suspend fun getAccountById(id: Long): AccountEntity? = accountDao.getAccountById(id)
     suspend fun insertAccount(account: AccountEntity): Long = accountDao.insertAccount(account)
     suspend fun updateAccount(account: AccountEntity) = accountDao.updateAccount(account)

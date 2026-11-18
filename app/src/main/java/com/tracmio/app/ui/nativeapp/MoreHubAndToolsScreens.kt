@@ -3,9 +3,11 @@ package com.tracmio.app.ui.nativeapp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,40 +23,50 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tracmio.app.data.NativeTracmioUiState
 
+enum class ToolWorkflowGroup(val label: String) {
+    ALL("All"),
+    DAILY_SPEND("Daily Spend"),
+    SUBS_KHATA("Subs & Khata"),
+    PLANNING_DEBT("Planning & Debt"),
+    INTELLIGENCE("Intelligence"),
+    VAULT_SYSTEM("Vault & System")
+}
+
 data class ToolCatalogItem(
     val id: String,
     val route: String,
     val emoji: String,
     val title: String,
     val subtitle: String,
-    val accent: Color
+    val accent: Color,
+    val group: ToolWorkflowGroup = ToolWorkflowGroup.DAILY_SPEND
 )
 
 val ALL_TOOLS_CATALOG: List<ToolCatalogItem> = listOf(
-    ToolCatalogItem("khata", "khata", "📓", "Khata / Pay Later", "Shop & friend tabs", Color(0xFF00F5D4)),
-    ToolCatalogItem("recharge", "recharge", "📶", "SIM & WiFi Recharge", "28 / 56 / 84d validity", Color(0xFF38BDF8)),
-    ToolCatalogItem("refunds", "refunds", "📦", "Pending Refunds", "Returns & order credits", Color(0xFF34D399)),
-    ToolCatalogItem("wishlist", "wishlist", "🧊", "24h Cooling Wishlist", "Impulse pause & save", Color(0xFFA855F7)),
-    ToolCatalogItem("cashback", "cashback", "🎁", "Cashback & Rewards", "UPI & card rewards log", Color(0xFFFBBF24)),
-    ToolCatalogItem("price_per_use", "price_per_use", "🧮", "Price-Per-Use Calc", "Value per real usage", Color(0xFF22D3EE)),
-    ToolCatalogItem("round_up", "round_up", "🪙", "Round-Up Change Jar", "Spare change to goals", Color(0xFF10B981)),
-    ToolCatalogItem("runway", "runway", "🛟", "Emergency Runway", "Months survival meter", Color(0xFF38BDF8)),
-    ToolCatalogItem("debt_planner", "debt_planner", "📉", "Debt Payoff Planner", "Snowball vs Avalanche", Color(0xFFFB7185)),
-    ToolCatalogItem("warranty_vault", "warranty_vault", "🛡️", "Receipt Warranty Vault", "Deadlines & return dates", Color(0xFF00F5D4)),
-    ToolCatalogItem("reports", "reports", "📈", "Reports & Radar", "4 chart styles & UPI", Color(0xFF00F5D4)),
-    ToolCatalogItem("subscriptions", "subscriptions", "🔁", "Subscriptions", "Recurring monthly bills", Color(0xFFA855F7)),
-    ToolCatalogItem("financial_xray", "financial_xray", "🩻", "Financial X-Ray", "10-point health score", Color(0xFF34D399)),
-    ToolCatalogItem("money_story", "money_story", "📖", "Money Story", "Monthly cash narrative", Color(0xFF38BDF8)),
-    ToolCatalogItem("global_search", "global_search", "🔍", "Global Search", "Ledger, #tags & tools", Color(0xFFFBBF24)),
-    ToolCatalogItem("spending_dna", "spending_dna", "🧬", "Spending DNA", "50 / 30 / 20 breakdown", Color(0xFFC084FC)),
-    ToolCatalogItem("calendar", "calendar", "🔥", "Calendar & Streak", "No-spend milestones", Color(0xFFFB7185)),
-    ToolCatalogItem("reminders", "reminders", "⏰", "9 PM Summary & Alerts", "Daily & event alerts", Color(0xFFFBBF24)),
-    ToolCatalogItem("time_machine", "time_machine", "⏳", "Time Machine", "Compound wealth sim", Color(0xFF00F5D4)),
-    ToolCatalogItem("data_export", "data_export", "💾", "Full JSON Backup", "AES-GCM, XLSX, CSV, PDF", Color(0xFF34D399)),
-    ToolCatalogItem("app_lock", "app_lock", "🔐", "App Lock & Biometrics", "PIN, biometrics & key", Color(0xFFFB7185)),
-    ToolCatalogItem("permissions", "permissions", "🛡️", "Offline Security Audit", "Zero internet & DB check", Color(0xFF38BDF8)),
-    ToolCatalogItem("custom_trackers", "custom_trackers", "🎯", "Custom Trackers", "Challenges & folders", Color(0xFFA855F7)),
-    ToolCatalogItem("themes", "themes", "🎨", "Liquid Glass UI Studio", "Themes, mesh & scale", Color(0xFF00F5D4))
+    ToolCatalogItem("khata", "khata", "📓", "Khata / Pay Later", "Shop & friend tabs", Color(0xFF00F5D4), ToolWorkflowGroup.SUBS_KHATA),
+    ToolCatalogItem("recharge", "recharge", "📶", "SIM & WiFi Recharge", "28 / 56 / 84d validity", Color(0xFF38BDF8), ToolWorkflowGroup.SUBS_KHATA),
+    ToolCatalogItem("refunds", "refunds", "📦", "Pending Refunds", "Returns & order credits", Color(0xFF34D399), ToolWorkflowGroup.DAILY_SPEND),
+    ToolCatalogItem("wishlist", "wishlist", "🧊", "24h Cooling Wishlist", "Impulse pause & save", Color(0xFFA855F7), ToolWorkflowGroup.PLANNING_DEBT),
+    ToolCatalogItem("cashback", "cashback", "🎁", "Cashback & Rewards", "UPI & card rewards log", Color(0xFFFBBF24), ToolWorkflowGroup.DAILY_SPEND),
+    ToolCatalogItem("price_per_use", "price_per_use", "🧮", "Price-Per-Use Calc", "Value per real usage", Color(0xFF22D3EE), ToolWorkflowGroup.DAILY_SPEND),
+    ToolCatalogItem("round_up", "round_up", "🪙", "Round-Up Change Jar", "Spare change to goals", Color(0xFF10B981), ToolWorkflowGroup.PLANNING_DEBT),
+    ToolCatalogItem("runway", "runway", "🛟", "Emergency Runway", "Months survival meter", Color(0xFF38BDF8), ToolWorkflowGroup.PLANNING_DEBT),
+    ToolCatalogItem("debt_planner", "debt_planner", "📉", "Debt Payoff Planner", "Snowball vs Avalanche", Color(0xFFFB7185), ToolWorkflowGroup.PLANNING_DEBT),
+    ToolCatalogItem("warranty_vault", "warranty_vault", "🛡️", "Receipt Warranty Vault", "Deadlines & return dates", Color(0xFF00F5D4), ToolWorkflowGroup.DAILY_SPEND),
+    ToolCatalogItem("reports", "reports", "📈", "Reports & Radar", "4 chart styles & UPI", Color(0xFF00F5D4), ToolWorkflowGroup.INTELLIGENCE),
+    ToolCatalogItem("subscriptions", "subscriptions", "🔁", "Subscriptions", "Recurring monthly bills", Color(0xFFA855F7), ToolWorkflowGroup.SUBS_KHATA),
+    ToolCatalogItem("financial_xray", "financial_xray", "🩻", "Financial X-Ray", "10-point health score", Color(0xFF34D399), ToolWorkflowGroup.INTELLIGENCE),
+    ToolCatalogItem("money_story", "money_story", "📖", "Money Story", "Monthly cash narrative", Color(0xFF38BDF8), ToolWorkflowGroup.INTELLIGENCE),
+    ToolCatalogItem("global_search", "global_search", "🔍", "Global Search", "Ledger, #tags & tools", Color(0xFFFBBF24), ToolWorkflowGroup.DAILY_SPEND),
+    ToolCatalogItem("spending_dna", "spending_dna", "🧬", "Spending DNA", "50 / 30 / 20 breakdown", Color(0xFFC084FC), ToolWorkflowGroup.INTELLIGENCE),
+    ToolCatalogItem("calendar", "calendar", "🔥", "Calendar & Streak", "No-spend milestones", Color(0xFFFB7185), ToolWorkflowGroup.INTELLIGENCE),
+    ToolCatalogItem("reminders", "reminders", "⏰", "Daily Summary & Alerts", "Scheduled & event alerts", Color(0xFFFBBF24), ToolWorkflowGroup.SUBS_KHATA),
+    ToolCatalogItem("time_machine", "time_machine", "⏳", "Time Machine", "Compound wealth sim", Color(0xFF00F5D4), ToolWorkflowGroup.PLANNING_DEBT),
+    ToolCatalogItem("data_export", "data_export", "💾", "Full JSON Backup", "AES-GCM, XLSX, CSV, PDF", Color(0xFF34D399), ToolWorkflowGroup.VAULT_SYSTEM),
+    ToolCatalogItem("app_lock", "app_lock", "🔐", "App Lock & Biometrics", "PIN, biometrics & key", Color(0xFFFB7185), ToolWorkflowGroup.VAULT_SYSTEM),
+    ToolCatalogItem("permissions", "permissions", "🛡️", "Offline Security Audit", "Zero internet & DB check", Color(0xFF38BDF8), ToolWorkflowGroup.VAULT_SYSTEM),
+    ToolCatalogItem("custom_trackers", "custom_trackers", "🎯", "Custom Trackers", "Challenges & folders", Color(0xFFA855F7), ToolWorkflowGroup.SUBS_KHATA),
+    ToolCatalogItem("themes", "themes", "🎨", "Liquid Glass UI Studio", "Themes, mesh & scale", Color(0xFF00F5D4), ToolWorkflowGroup.VAULT_SYSTEM)
 )
 
 @Composable
@@ -65,21 +77,12 @@ fun MoreScreen(
     viewModel: NativeTracmioViewModel,
     onNavigate: (String) -> Unit
 ) {
-    var organizeMode by remember { mutableStateOf(false) }
-
     val primaryCards = listOf(
         ToolCatalogItem("budgets", "budgets", "📊", "Planning & Budgets", "Budgets, Runway & Goals", palette.primary),
         ToolCatalogItem("people", "people", "👥", "People & Khata", "Smart Split & Balances", Color(0xFFA855F7)),
         ToolCatalogItem("cash_counter", "cash_counter", "💵", "3-Step Cash Counter", "Notes & Coins Reconcile", Color(0xFF34D399)),
         ToolCatalogItem("guide", "guide", "📘", "App Guide & Manual", "Quick-jump help directory", Color(0xFF38BDF8))
     )
-
-    val orderedTools = remember(state.pinnedToolIds) {
-        val pinnedSet = state.pinnedToolIds.toSet()
-        val pinned = ALL_TOOLS_CATALOG.filter { it.id in pinnedSet }
-        val rest = ALL_TOOLS_CATALOG.filterNot { it.id in pinnedSet }
-        pinned + rest
-    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().testTag("more_screen_list"),
@@ -95,7 +98,7 @@ fun MoreScreen(
             )
         }
 
-        // Dedicated Single Tools Hub Folder inside More
+        // Single Dedicated Tools Hub Folder inside More
         item {
             GlassCard(
                 settings = settings,
@@ -163,7 +166,7 @@ fun MoreScreen(
             }
         }
 
-        // Primary 2-Column Uniform Height Feature Cards
+        // Primary 2x2 Core Workflows
         items(primaryCards.chunked(2)) { pair ->
             Row(
                 modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
@@ -207,109 +210,57 @@ fun MoreScreen(
             }
         }
 
-        // Inline Tools Hub Header + Organize Toggle
+        // Dedicated Settings Screen Launcher Card
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            GlassCard(
+                settings = settings,
+                shape = RoundedCornerShape(24.dp),
+                borderColor = palette.secondary.copy(alpha = 0.50f),
+                onClick = { onNavigate("settings") },
+                modifier = Modifier.fillMaxWidth().testTag("more_open_settings_card")
             ) {
-                Column {
-                    Text(
-                        "Inline Tools Hub (${orderedTools.size})",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = palette.textPrimary
-                    )
-                    Text(
-                        if (organizeMode) "Tap any tool card to Pin / Unpin to top" else "1-tap access to all 24 offline tools",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (organizeMode) palette.primary else palette.textSecondary
-                    )
-                }
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = if (organizeMode) palette.primary else palette.surfaceElevated,
+                Row(
                     modifier = Modifier
-                        .border(1.dp, palette.primary, RoundedCornerShape(14.dp))
-                        .clickable { organizeMode = !organizeMode }
-                        .testTag("more_inline_organize_button")
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        if (organizeMode) "✓ Done" else "⇄ Organize",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (organizeMode) palette.background else palette.primary,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                }
-            }
-        }
-
-        // Inline 24-Tool Grid inside More
-        items(orderedTools.chunked(2)) { pair ->
-            Row(
-                modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                pair.forEach { tool ->
-                    val isPinned = state.pinnedToolIds.contains(tool.id)
-                    GlassCard(
-                        settings = settings,
-                        borderColor = if (isPinned) palette.primary else null,
-                        onClick = {
-                            if (organizeMode) {
-                                viewModel.toggleToolPin(tool.id)
-                            } else {
-                                onNavigate(tool.route)
-                            }
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .testTag("inline_tool_card_${tool.id}")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize().padding(14.dp),
-                            verticalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                GlassBadge3D(emoji = tool.emoji, accent = tool.accent, sizeDp = 38.dp)
-                                if (isPinned || organizeMode) {
-                                    Text(
-                                        if (isPinned) "📌" else "＋",
-                                        fontSize = 13.sp,
-                                        color = if (isPinned) palette.primary else palette.textSecondary
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text(
-                                    tool.title,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = palette.textPrimary,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    tool.subtitle,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = palette.textSecondary,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+                        GlassBadge3D(emoji = "⚙️", accent = palette.secondary, sizeDp = 46.dp)
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                "Settings",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = palette.textPrimary
+                            )
+                            Text(
+                                "Profile, Reminder Time, Permissions, Backups, App Info & Reset Vault",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = palette.textSecondary,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
-                }
-                if (pair.size == 1) {
-                    Spacer(Modifier.weight(1f))
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = palette.secondary.copy(alpha = 0.18f),
+                        modifier = Modifier.border(1.dp, palette.secondary.copy(alpha = 0.7f), RoundedCornerShape(14.dp))
+                    ) {
+                        Text(
+                            "Open →",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.secondary,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
                 }
             }
         }
@@ -326,11 +277,17 @@ fun ToolsHubFolderScreen(
     onNavigate: (String) -> Unit
 ) {
     var organizeMode by remember { mutableStateOf(false) }
+    var selectedGroup by remember { mutableStateOf(ToolWorkflowGroup.ALL) }
 
-    val orderedTools = remember(state.pinnedToolIds) {
+    val orderedTools = remember(state.pinnedToolIds, selectedGroup) {
+        val base = if (selectedGroup == ToolWorkflowGroup.ALL) {
+            ALL_TOOLS_CATALOG
+        } else {
+            ALL_TOOLS_CATALOG.filter { it.group == selectedGroup }
+        }
         val pinnedSet = state.pinnedToolIds.toSet()
-        val pinned = ALL_TOOLS_CATALOG.filter { it.id in pinnedSet }
-        val rest = ALL_TOOLS_CATALOG.filterNot { it.id in pinnedSet }
+        val pinned = base.filter { it.id in pinnedSet }
+        val rest = base.filterNot { it.id in pinnedSet }
         pinned + rest
     }
 
@@ -382,6 +339,37 @@ fun ToolsHubFolderScreen(
                         color = if (organizeMode) palette.background else palette.primary,
                         fontWeight = FontWeight.ExtraBold
                     )
+                }
+            }
+        }
+
+        // Workflow Category Filter Chips
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .testTag("tools_hub_category_filters"),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ToolWorkflowGroup.entries.forEach { grp ->
+                    val sel = selectedGroup == grp
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (sel) palette.primary else palette.surface)
+                            .border(1.dp, if (sel) palette.primary else palette.surfaceBorder, RoundedCornerShape(14.dp))
+                            .clickable { selectedGroup = grp }
+                            .padding(horizontal = 12.dp, vertical = 7.dp)
+                            .testTag("tools_filter_${grp.name.lowercase()}")
+                    ) {
+                        Text(
+                            text = grp.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (sel) palette.background else palette.textPrimary,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
                 }
             }
         }
@@ -480,7 +468,8 @@ fun InAppGuideScreen(
             Triple("🏠 Home & Quick Spend", "Check Net Balance, Monthly Pace, Safe-to-Spend Today, and tap chips to log instant expenses.", "dashboard"),
             Triple("🏦 Accounts & Allocations", "Create Bank, Cash, Wallet, or Credit Card accounts. Use 1-Tap ATM withdrawal, Auto-Split %, and >30% CC utilization alerts.", "accounts"),
             Triple("🧾 Transactions & Hashtags", "Search notes/categories/UPI, use Top-Left Filter for Account/Date, #hashtags for event totals, Half-Cash + Half-UPI Split, and 1-Tap Repeat (↻).", "transactions"),
-            Triple("💵 3-Step Cash Counter", "Count physical notes (₹500–₹10) and coins (₹20–₹1) and reconcile directly into Cash Wallet.", "cash_counter")
+            Triple("💵 3-Step Cash Counter", "Count physical notes (₹500–₹10) and coins (₹20–₹1) and reconcile directly into Cash Wallet.", "cash_counter"),
+            Triple("⚙️ Settings & Vault Reset", "Configure your profile, custom daily reminder schedule, device permissions, backups, and vault reset.", "settings")
         ) + ALL_TOOLS_CATALOG.map {
             Triple("${it.emoji} ${it.title}", it.subtitle, it.route)
         }

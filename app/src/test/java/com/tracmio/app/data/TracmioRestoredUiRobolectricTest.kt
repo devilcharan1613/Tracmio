@@ -4,24 +4,34 @@ import android.app.Application
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
-import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import com.tracmio.app.data.local.AccountEntity
 import com.tracmio.app.data.local.TransactionEntity
+import com.tracmio.app.data.security.DeviceSecurityCapability
 import com.tracmio.app.ui.nativeapp.DashboardScreen
 import com.tracmio.app.ui.nativeapp.LiquidGlassSettings
+import com.tracmio.app.ui.nativeapp.MoreScreen
+import com.tracmio.app.ui.nativeapp.NativeHostCallbacks
 import com.tracmio.app.ui.nativeapp.NativeTracmioViewModel
+import com.tracmio.app.ui.nativeapp.OnboardingDialog
+import com.tracmio.app.ui.nativeapp.SettingsScreen
 import com.tracmio.app.ui.nativeapp.ThemePresets
+import com.tracmio.app.ui.nativeapp.ThemesStudioScreen
 import com.tracmio.app.ui.nativeapp.TracmioNativeTheme
 import com.tracmio.app.ui.nativeapp.TracmioTopBar
 import com.tracmio.app.ui.nativeapp.TransactionsListScreen
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -219,5 +229,172 @@ class TracmioRestoredUiRobolectricTest {
             "ACCESS_NETWORK_STATE must not be declared",
             requested.contains("android.permission.ACCESS_NETWORK_STATE")
         )
+    }
+
+    @Test
+    fun moreScreenUsesSingleToolsHubFolderAndDedicatedSettingsCard() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val viewModel = NativeTracmioViewModel(app)
+        val settings = LiquidGlassSettings(hasCompletedOnboarding = true)
+        val palette = ThemePresets.getPalette(settings.themePreset)
+        var navigatedRoute = ""
+
+        composeRule.setContent {
+            TracmioNativeTheme(settings = settings) {
+                MoreScreen(
+                    state = NativeTracmioUiState(),
+                    settings = settings,
+                    palette = palette,
+                    viewModel = viewModel,
+                    onNavigate = { navigatedRoute = it }
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("open_tools_hub_folder").assertIsDisplayed()
+        composeRule.onNodeWithText("Inline Tools Hub", substring = true).assertDoesNotExist()
+
+        composeRule.onNodeWithTag("more_screen_list").performScrollToNode(hasTestTag("more_open_settings_card"))
+        composeRule.onNodeWithTag("more_open_settings_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("more_open_settings_card").performClick()
+        assertEquals("settings", navigatedRoute)
+    }
+
+    @Test
+    fun settingsScreenDisplaysLiveCountsReminderScheduleAndDoubleConfirmReset() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val viewModel = NativeTracmioViewModel(app)
+        val settings = LiquidGlassSettings(userName = "Charan", hasCompletedOnboarding = true)
+        val palette = ThemePresets.getPalette(settings.themePreset)
+        var scheduledArgs: Triple<Boolean, Int, Int>? = null
+        val hostCallbacks = fakeHostCallbacks(onScheduleDaily = { en, h, m -> scheduledArgs = Triple(en, h, m) })
+        val state = NativeTracmioUiState(
+            accounts = listOf(AccountEntity(id = 1L, name = "Main", accountType = "Bank", balance = 1000.0)),
+            dailyReminderHour = 21,
+            dailyReminderMinute = 0
+        )
+
+        composeRule.setContent {
+            TracmioNativeTheme(settings = settings) {
+                SettingsScreen(
+                    state = state,
+                    settings = settings,
+                    palette = palette,
+                    viewModel = viewModel,
+                    hostCallbacks = hostCallbacks,
+                    onBack = {},
+                    onNavigate = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("settings_screen").performScrollToNode(hasTestTag("settings_save_reminder_time_button"))
+        composeRule.onNodeWithTag("settings_rem_hour_minus").performClick()
+        composeRule.onNodeWithTag("settings_save_reminder_time_button").performClick()
+        assertEquals(Triple(true, 20, 0), scheduledArgs)
+
+        composeRule.onNodeWithTag("settings_screen").performScrollToNode(hasTestTag("settings_live_counts_text"))
+        composeRule.onNodeWithText("Accounts: 1", substring = true).assertIsDisplayed()
+
+        composeRule.onNodeWithTag("settings_screen").performScrollToNode(hasTestTag("settings_reset_all_data_button"))
+        composeRule.onNodeWithTag("settings_reset_all_data_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_reset_step1_confirm").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("settings_reset_step2_confirm").assertIsDisplayed()
+    }
+
+    @Test
+    fun themesStudioDisplaysLivePreviewAnimStylesBlurAndReplayWelcome() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val viewModel = NativeTracmioViewModel(app)
+        val settings = LiquidGlassSettings(themePreset = "custom", customWallpaperPath = "/tmp/fake.jpg", hasCompletedOnboarding = true)
+        val palette = ThemePresets.getPalette(settings.themePreset)
+
+        composeRule.setContent {
+            TracmioNativeTheme(settings = settings) {
+                ThemesStudioScreen(
+                    settings = settings,
+                    palette = palette,
+                    viewModel = viewModel,
+                    hostCallbacks = fakeHostCallbacks(),
+                    onBack = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("themes_live_preview_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("themes_custom_color_pickers").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("themes_studio_screen").performScrollToNode(hasTestTag("themes_anim_style_selector"))
+        composeRule.onNodeWithTag("themes_anim_style_selector").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("themes_studio_screen").performScrollToNode(hasTestTag("themes_remove_wallpaper_button"))
+        composeRule.onNodeWithTag("themes_remove_wallpaper_button").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("themes_studio_screen").performScrollToNode(hasTestTag("themes_replay_welcome_button"))
+        composeRule.onNodeWithTag("themes_wallpaper_blur_slider").assertIsDisplayed()
+        composeRule.onNodeWithTag("themes_replay_welcome_button").assertIsDisplayed().performClick()
+        assertTrue(viewModel.replayWelcome.value)
+    }
+
+    @Test
+    fun welcomeSplashOverlayDisplaysAnimatedBrandTaglineAndGetStarted() {
+        val settings = LiquidGlassSettings(userName = "Charan", currencySymbol = "₹")
+        val palette = ThemePresets.getPalette(settings.themePreset)
+        var completed = false
+
+        composeRule.setContent {
+            TracmioNativeTheme(settings = settings) {
+                OnboardingDialog(
+                    settings = settings,
+                    palette = palette,
+                    onComplete = { _, _ -> completed = true }
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("welcome_splash_overlay").assertIsDisplayed()
+        composeRule.onNodeWithText("Track smart. Spend wise.").assertIsDisplayed()
+        composeRule.onNodeWithTag("welcome_get_started_button").performClick()
+        assertTrue(completed)
+    }
+
+    private fun fakeHostCallbacks(
+        onScheduleDaily: (Boolean, Int, Int) -> Unit = { _, _, _ -> }
+    ): NativeHostCallbacks = object : NativeHostCallbacks {
+        override fun chooseWallpaperImage() {}
+        override fun captureWallpaperImage() {}
+        override fun pickTrackerAttachment(onPicked: (String, String, String, Long) -> Unit) {}
+        override fun captureReceiptPhoto(onCaptured: (String, String, String, Long) -> Unit) {}
+        override fun exportPlainJsonBackup(fileName: String) {}
+        override fun exportEncryptedJsonBackup(fileName: String, password: CharArray) {}
+        override fun importJsonBackup(decryptPassword: CharArray?) {}
+        override fun importLegacyJsonBackup() {}
+        override fun importLegacyDatabaseFile() {}
+        override fun exportWorkbookXlsx(fileName: String) {}
+        override fun exportCsv(fileName: String) {}
+        override fun importCsv() {}
+        override fun printReceipt(tx: TransactionEntity, accountName: String) {}
+        override fun printStatement(accounts: List<AccountEntity>, transactions: List<TransactionEntity>) {}
+        override fun printCustomReport(jobName: String, title: String, lines: List<Pair<String, Boolean>>) {}
+        override fun copyToClipboard(text: String) {}
+        override fun readClipboardText(): String? = null
+        override fun requestNotificationPermission() {}
+        override fun hasNotificationPermission(): Boolean = true
+        override fun hasCameraPermission(): Boolean = true
+        override fun getDeviceSecurityCapability(): DeviceSecurityCapability = DeviceSecurityCapability.NONE
+        override fun authenticateBiometric(onSuccess: () -> Unit, onFailure: (String) -> Unit) {}
+        override fun authenticateDeviceCredential(onSuccess: () -> Unit, onFailure: (String) -> Unit) {}
+        override fun scheduleDailyReminder(enabled: Boolean, hour: Int, minute: Int, userName: String) {
+            onScheduleDaily(enabled, hour, minute)
+        }
+        override fun dispatchTestReminder() {}
+        override fun scheduleCalendarEventReminder(title: String, message: String, triggerAtMillis: Long, eventId: String) {}
+        override fun scheduleMonthlyBackupReminder(enabled: Boolean, dayOfMonth: Int, hour: Int, minute: Int) {}
     }
 }

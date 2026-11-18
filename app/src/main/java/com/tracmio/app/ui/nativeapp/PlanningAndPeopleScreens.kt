@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -317,13 +318,18 @@ private fun PeopleAndKhataSection(
     }
 
     if (showSmartSplit) {
+        var splitTitle by remember { mutableStateOf("Dinner Split") }
         var totalBill by remember { mutableStateOf("") }
         var headCount by remember { mutableStateOf("3") }
+        var friendNamesText by remember { mutableStateOf("") }
         var includeOwnShare by remember { mutableStateOf(true) }
         val bill = totalBill.toDoubleOrNull() ?: 0.0
         val count = (headCount.toIntOrNull() ?: 1).coerceAtLeast(1)
         val perPerson = bill / count.toDouble()
         val othersOwe = if (includeOwnShare) (bill - perPerson).coerceAtLeast(0.0) else bill
+        val parsedNames = remember(friendNamesText) {
+            friendNamesText.split(",").map { it.trim() }.filter { it.isNotBlank() }
+        }
 
         AlertDialog(
             onDismissRequest = { showSmartSplit = false },
@@ -331,8 +337,54 @@ private fun PeopleAndKhataSection(
             title = { Text("⚡ Smart Split Bill Calculator", fontWeight = FontWeight.ExtraBold, color = palette.primary) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = totalBill, onValueChange = { totalBill = it }, label = { Text("Total Bill ($curr)") }, singleLine = true)
-                    OutlinedTextField(value = headCount, onValueChange = { headCount = it }, label = { Text("Number of People") }, singleLine = true)
+                    OutlinedTextField(
+                        value = splitTitle,
+                        onValueChange = { splitTitle = it },
+                        label = { Text("Split Title (e.g. Dinner, Cab)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("smart_split_title_input")
+                    )
+                    OutlinedTextField(
+                        value = totalBill,
+                        onValueChange = { totalBill = it },
+                        label = { Text("Total Bill ($curr)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("smart_split_total_input")
+                    )
+                    OutlinedTextField(
+                        value = headCount,
+                        onValueChange = { headCount = it },
+                        label = { Text("Number of People") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("smart_split_count_input")
+                    )
+                    OutlinedTextField(
+                        value = friendNamesText,
+                        onValueChange = { friendNamesText = it },
+                        label = { Text("Friends (comma-separated, e.g. Rahul, Priya)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("smart_split_friends_input")
+                    )
+                    if (state.persons.isNotEmpty()) {
+                        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            state.persons.forEach { p ->
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = palette.surface,
+                                    modifier = Modifier.clickable {
+                                        val existing = friendNamesText.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                                        friendNamesText = if (existing.any { it.equals(p.name, true) }) {
+                                            existing.filterNot { it.equals(p.name, true) }.joinToString(", ")
+                                        } else {
+                                            (existing + p.name).joinToString(", ")
+                                        }
+                                    }
+                                ) {
+                                    Text("+ ${p.name}", modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, color = palette.primary)
+                                }
+                            }
+                        }
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = includeOwnShare, onCheckedChange = { includeOwnShare = it })
                         Text("Include my own share", color = palette.textPrimary)
@@ -344,11 +396,46 @@ private fun PeopleAndKhataSection(
                         style = MaterialTheme.typography.labelSmall,
                         color = palette.textSecondary
                     )
+                    OutlinedButton(
+                        onClick = {
+                            val summary = buildString {
+                                append("⚡ *Tracmio Split: ${splitTitle.ifBlank { "Bill Split" }}*\n")
+                                append("• Total Bill: $curr${"%,.2f".format(bill)}\n")
+                                append("• Each Pays: $curr${"%,.2f".format(perPerson)} ($count people)\n")
+                                if (parsedNames.isNotEmpty()) {
+                                    append("• Split with: ${parsedNames.joinToString(", ")}\n")
+                                }
+                                append("• Others Owe: $curr${"%,.2f".format(othersOwe)}")
+                            }
+                            hostCallbacks.copyToClipboard(summary)
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("smart_split_share_button")
+                    ) {
+                        Text("📋 Copy WhatsApp Summary", color = palette.primary, fontWeight = FontWeight.Bold)
+                    }
                 }
             },
             confirmButton = {
-                Button(onClick = { showSmartSplit = false }, colors = ButtonDefaults.buttonColors(containerColor = palette.primary)) {
-                    Text("Done", color = palette.background, fontWeight = FontWeight.Bold)
+                Button(
+                    onClick = {
+                        viewModel.saveSmartSplit(
+                            totalBill = bill,
+                            headCount = count,
+                            includeOwnShare = includeOwnShare,
+                            splitNote = splitTitle,
+                            targetPersonNames = parsedNames
+                        )
+                        showSmartSplit = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
+                    modifier = Modifier.testTag("smart_split_save_button")
+                ) {
+                    Text("⚡ Save Split to People", color = palette.background, fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSmartSplit = false }) {
+                    Text("Close", color = palette.textSecondary)
                 }
             }
         )

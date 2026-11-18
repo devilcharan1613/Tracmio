@@ -7,12 +7,21 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,10 +39,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -119,10 +134,52 @@ fun NativeTracmioApp(
         }
     }
 
+    val replayWelcome by viewModel.replayWelcome.collectAsStateWithLifecycle()
+
     var showAddTxSheet by remember { mutableStateOf(false) }
     var addTxInitialType by remember { mutableStateOf("EXPENSE") }
     var editingTransaction by remember { mutableStateOf<TransactionEntity?>(null) }
     var receiptTransaction by remember { mutableStateOf<TransactionEntity?>(null) }
+    var initialLedgerSearch by remember { mutableStateOf("") }
+    var dockVisible by remember { mutableStateOf(true) }
+
+    LaunchedEffect(currentRoute) {
+        dockVisible = true
+    }
+
+    val scrollDockConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y < -14f) {
+                    dockVisible = false
+                } else if (available.y > 10f) {
+                    dockVisible = true
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    var appEntered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { appEntered = true }
+    val appOpenAlpha by animateFloatAsState(
+        targetValue = if (appEntered) 1f else 0f,
+        animationSpec = tween(420, easing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)),
+        label = "app_open_alpha"
+    )
+    val appOpenScale by animateFloatAsState(
+        targetValue = if (appEntered) 1f else 0.992f,
+        animationSpec = tween(420, easing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)),
+        label = "app_open_scale"
+    )
+    val appOpenOffsetY by animateFloatAsState(
+        targetValue = if (appEntered) 0f else 18f,
+        animationSpec = tween(420, easing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)),
+        label = "app_open_offset"
+    )
+
+    val density = LocalDensity.current
+    val isImeVisible = WindowInsets.ime.getBottom(density) > 0
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -173,6 +230,12 @@ fun NativeTracmioApp(
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(horizontal = 6.dp, vertical = 4.dp)
+                    .graphicsLayer {
+                        alpha = appOpenAlpha
+                        scaleX = appOpenScale
+                        scaleY = appOpenScale
+                        translationY = appOpenOffsetY
+                    }
                     .clip(RoundedCornerShape(28.dp))
                     .border(
                         width = 1.4.dp,
@@ -215,21 +278,27 @@ fun NativeTracmioApp(
                         )
                     },
                     bottomBar = {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                        AnimatedVisibility(
+                            visible = dockVisible && !isImeVisible,
+                            enter = slideInVertically(tween(260)) { it } + fadeIn(tween(220)),
+                            exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(180))
                         ) {
-                            FloatingGlassBottomNav(
-                                currentRoute = currentRoute,
-                                palette = palette,
-                                onSelectTab = { navigateTo(it) },
-                                onQuickAdd = {
-                                    editingTransaction = null
-                                    addTxInitialType = "EXPENSE"
-                                    showAddTxSheet = true
-                                }
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                            ) {
+                                FloatingGlassBottomNav(
+                                    currentRoute = currentRoute,
+                                    palette = palette,
+                                    onSelectTab = { navigateTo(it) },
+                                    onQuickAdd = {
+                                        editingTransaction = null
+                                        addTxInitialType = "EXPENSE"
+                                        showAddTxSheet = true
+                                    }
+                                )
+                            }
                         }
                     }
                 ) { padding ->
@@ -237,10 +306,11 @@ fun NativeTracmioApp(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(padding)
+                            .nestedScroll(scrollDockConnection)
                     ) {
                         AnimatedContent(
                             targetState = currentRoute,
-                            transitionSpec = { fadeIn() togetherWith fadeOut() },
+                            transitionSpec = { tracmioTransitionSpec(settings.animationStyle) },
                             label = "tracmio_screen"
                         ) { route ->
                         when (route) {
@@ -268,6 +338,8 @@ fun NativeTracmioApp(
                                 settings = settings,
                                 palette = palette,
                                 viewModel = viewModel,
+                                initialSearchQuery = initialLedgerSearch,
+                                onConsumeInitialSearchQuery = { initialLedgerSearch = "" },
                                 onOpenReceipt = { receiptTransaction = it }
                             )
                             "more" -> MoreScreen(
@@ -275,6 +347,15 @@ fun NativeTracmioApp(
                                 settings = settings,
                                 palette = palette,
                                 viewModel = viewModel,
+                                onNavigate = { navigateTo(it) }
+                            )
+                            "settings" -> SettingsScreen(
+                                state = state,
+                                settings = settings,
+                                palette = palette,
+                                viewModel = viewModel,
+                                hostCallbacks = hostCallbacks,
+                                onBack = { navigateBack() },
                                 onNavigate = { navigateTo(it) }
                             )
                             "tools_hub" -> ToolsHubFolderScreen(
@@ -320,7 +401,11 @@ fun NativeTracmioApp(
                                 palette = palette,
                                 viewModel = viewModel,
                                 onBack = { navigateBack() },
-                                onSelectSubRoute = { replaceSubRoute(it) }
+                                onSelectSubRoute = { replaceSubRoute(it) },
+                                onFilterCategoryInLedger = { cat ->
+                                    initialLedgerSearch = cat
+                                    navigateTo("transactions")
+                                }
                             )
                             // Trackers & Time Machine
                             "custom_trackers", "time_machine" -> TrackersAndTimeMachineScreens(
@@ -458,10 +543,12 @@ fun NativeTracmioApp(
                 )
             }
 
-            if (!settings.hasCompletedOnboarding) {
+            if (!settings.hasCompletedOnboarding || replayWelcome) {
                 OnboardingDialog(
                     settings = settings,
                     palette = palette,
+                    isReplayMode = replayWelcome,
+                    onDismiss = { viewModel.dismissReplayWelcome() },
                     onComplete = { name, curr ->
                         viewModel.completeOnboarding(name, curr)
                     }
@@ -583,6 +670,7 @@ fun TracmioTopBar(
                             append("mio")
                         }
                     },
+                    fontFamily = PlusJakartaFontFamily,
                     fontSize = 24.sp,
                     letterSpacing = (-0.5).sp
                 )
@@ -748,12 +836,23 @@ private fun FloatingGlassBottomNav(
         }
 
         // Raised glowing central + button protruding above the rounded glass dock
+        val fabInteraction = remember { MutableInteractionSource() }
+        val fabPressed by fabInteraction.collectIsPressedAsState()
+        val fabScale by animateFloatAsState(
+            targetValue = if (fabPressed) 0.88f else 1f,
+            animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow),
+            label = "nav_fab_press"
+        )
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(y = 2.dp)
                 .size(58.dp)
+                .graphicsLayer {
+                    scaleX = fabScale
+                    scaleY = fabScale
+                }
                 .shadow(
                     elevation = 14.dp,
                     shape = CircleShape,
@@ -767,7 +866,7 @@ private fun FloatingGlassBottomNav(
                     )
                 )
                 .border(1.8.dp, Color(0xCCF0FDFA), CircleShape)
-                .clickable(onClick = onQuickAdd)
+                .clickable(interactionSource = fabInteraction, indication = null, onClick = onQuickAdd)
                 .testTag("nav_quick_add_fab")
         ) {
             Icon(
@@ -790,11 +889,26 @@ private fun BottomNavTabItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val tabInteraction = remember { MutableInteractionSource() }
+    val tabPressed by tabInteraction.collectIsPressedAsState()
+    val tabScale by animateFloatAsState(
+        targetValue = when {
+            tabPressed -> 0.92f
+            selected -> 1.05f
+            else -> 1f
+        },
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow),
+        label = "nav_tab_bounce"
+    )
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = modifier
             .fillMaxHeight()
+            .graphicsLayer {
+                scaleX = tabScale
+                scaleY = tabScale
+            }
             .clip(RoundedCornerShape(22.dp))
             .then(
                 if (selected) {
@@ -812,7 +926,7 @@ private fun BottomNavTabItem(
                     Modifier
                 }
             )
-            .clickable(onClick = onClick)
+            .clickable(interactionSource = tabInteraction, indication = null, onClick = onClick)
             .padding(horizontal = 2.dp, vertical = 4.dp)
             .testTag("bottom_nav_$route")
     ) {

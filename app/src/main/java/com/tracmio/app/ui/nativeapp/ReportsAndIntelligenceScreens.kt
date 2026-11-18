@@ -22,12 +22,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.tracmio.app.data.NativeIntelligenceCalculators
 import com.tracmio.app.data.NativeLedgerCalculator
 import com.tracmio.app.data.NativeTracmioUiState
 import com.tracmio.app.data.SpendingChartWindow
+import java.text.SimpleDateFormat
 import java.util.*
 
 @Composable
@@ -38,7 +40,8 @@ fun ReportsAndIntelligenceScreens(
     palette: ThemePalette,
     viewModel: NativeTracmioViewModel,
     onBack: (() -> Unit)? = null,
-    onSelectSubRoute: (String) -> Unit
+    onSelectSubRoute: (String) -> Unit,
+    onFilterCategoryInLedger: (String) -> Unit = {}
 ) {
     val curr = settings.currencySymbol
     val tabs = listOf(
@@ -511,20 +514,32 @@ fun ReportsAndIntelligenceScreens(
                                         entries.forEach { (cat, amt) ->
                                             val pct = ((amt / totalVal) * 100).toInt()
                                             Row(
-                                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(palette.surface).padding(10.dp),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(palette.surface)
+                                                    .clickable { onFilterCategoryInLedger(cat) }
+                                                    .padding(10.dp),
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Text(cat, fontWeight = FontWeight.Bold, color = palette.textPrimary)
-                                                Text("$pct% · $curr${"%,.0f".format(amt)}", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                                                Text("$pct% · $curr${"%,.0f".format(amt)} →", fontWeight = FontWeight.ExtraBold, color = palette.primary)
                                             }
                                         }
                                     }
                                     else -> {
                                         entries.forEachIndexed { idx, (cat, amt) ->
                                             val barColor = sliceColors[idx % sliceColors.size]
-                                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Column(
+                                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .clickable { onFilterCategoryInLedger(cat) }
+                                                    .padding(vertical = 3.dp)
+                                            ) {
                                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                    Text(cat, style = MaterialTheme.typography.labelMedium, color = palette.textPrimary, fontWeight = FontWeight.Bold)
+                                                    Text("$cat →", style = MaterialTheme.typography.labelMedium, color = palette.textPrimary, fontWeight = FontWeight.Bold)
                                                     Text("$curr${"%,.0f".format(amt)}", style = MaterialTheme.typography.labelMedium, color = barColor, fontWeight = FontWeight.ExtraBold)
                                                 }
                                                 LinearProgressIndicator(
@@ -538,6 +553,95 @@ fun ReportsAndIntelligenceScreens(
                                     }
                                 }
                             }
+                        }
+
+                        // 6-Month Cashflow Pulse (Grouped Income/Expense Bars + Net Trend Curve)
+                        LiquidGlassComponents(settings = settings, palette = palette, modifier = Modifier.testTag("reports_6m_cashflow_pulse")) {
+                            val sixMonths = remember(state.transactions) {
+                                val fmt = SimpleDateFormat("MMM", Locale.US)
+                                val cal = Calendar.getInstance()
+                                (5 downTo 0).map { offset ->
+                                    val targetCal = Calendar.getInstance().apply {
+                                        timeInMillis = cal.timeInMillis
+                                        add(Calendar.MONTH, -offset)
+                                    }
+                                    val y = targetCal.get(Calendar.YEAR)
+                                    val m = targetCal.get(Calendar.MONTH)
+                                    val txCal = Calendar.getInstance()
+                                    var inc = 0.0
+                                    var exp = 0.0
+                                    state.transactions.forEach { tx ->
+                                        txCal.timeInMillis = tx.timestamp
+                                        if (txCal.get(Calendar.YEAR) == y && txCal.get(Calendar.MONTH) == m) {
+                                            if (tx.type.equals("INCOME", true)) inc += tx.amount
+                                            else if (tx.type.equals("EXPENSE", true)) exp += tx.amount
+                                        }
+                                    }
+                                    Triple(fmt.format(targetCal.time), inc, exp)
+                                }
+                            }
+                            var selectedMonthIdx by remember { mutableIntStateOf(5) }
+                            val activeMonth = sixMonths[selectedMonthIdx.coerceIn(0, 5)]
+                            val maxBar = sixMonths.maxOfOrNull { maxOf(it.second, it.third) }?.coerceAtLeast(1.0) ?: 1.0
+
+                            Text("🌊 6-Month Cashflow Pulse", fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                            Canvas(modifier = Modifier.fillMaxWidth().height(120.dp)) {
+                                val slotW = size.width / sixMonths.size.toFloat()
+                                val barW = (slotW * 0.28f).coerceAtLeast(8f)
+                                val baseBottom = size.height - 10f
+                                val usableH = size.height * 0.78f
+                                val netPath = Path()
+
+                                sixMonths.forEachIndexed { idx, (_, inc, exp) ->
+                                    val centerX = slotW * idx + slotW / 2f
+                                    val incH = ((inc / maxBar) * usableH).toFloat().coerceAtLeast(4f)
+                                    val expH = ((exp / maxBar) * usableH).toFloat().coerceAtLeast(4f)
+                                    drawRoundRect(
+                                        color = Color(0xFF34D399),
+                                        topLeft = Offset(centerX - barW - 2f, baseBottom - incH),
+                                        size = Size(barW, incH),
+                                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f, 6f)
+                                    )
+                                    drawRoundRect(
+                                        color = Color(0xFFFB7185),
+                                        topLeft = Offset(centerX + 2f, baseBottom - expH),
+                                        size = Size(barW, expH),
+                                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f, 6f)
+                                    )
+                                    val netRatio = (((inc - exp) / maxBar).toFloat() * 0.5f + 0.5f).coerceIn(0.08f, 0.92f)
+                                    val netY = baseBottom - netRatio * usableH
+                                    if (idx == 0) netPath.moveTo(centerX, netY) else netPath.lineTo(centerX, netY)
+                                    drawCircle(
+                                        color = if (idx == selectedMonthIdx) palette.primary else Color.White,
+                                        radius = if (idx == selectedMonthIdx) 7f else 4.5f,
+                                        center = Offset(centerX, netY)
+                                    )
+                                }
+                                drawPath(path = netPath, color = palette.primary, style = Stroke(width = 3.2f, cap = StrokeCap.Round))
+                            }
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                sixMonths.forEachIndexed { idx, (lbl, _, _) ->
+                                    val sel = idx == selectedMonthIdx
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(if (sel) palette.primary else palette.surface)
+                                            .clickable { selectedMonthIdx = idx }
+                                            .padding(vertical = 5.dp)
+                                    ) {
+                                        Text(lbl, style = MaterialTheme.typography.labelSmall, color = if (sel) palette.background else palette.textSecondary, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                            Text(
+                                "${activeMonth.first}: +$curr${"%,.0f".format(activeMonth.second)} In · -$curr${"%,.0f".format(activeMonth.third)} Out · Net $curr${"%,.0f".format(activeMonth.second - activeMonth.third)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = palette.textPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
 
                         // Merchant & UPI App Breakdown + Weekend vs Weekday Radar + Side-by-Side Month Comparison

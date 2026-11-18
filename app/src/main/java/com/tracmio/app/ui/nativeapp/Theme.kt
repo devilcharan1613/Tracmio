@@ -1,6 +1,8 @@
 package com.tracmio.app.ui.nativeapp
 
 import android.graphics.BitmapFactory
+import android.os.Build
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -9,16 +11,21 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -27,12 +34,113 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.tracmio.app.R
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+
+val NunitoFontFamily = FontFamily(
+    Font(R.font.nunito, FontWeight.Normal),
+    Font(R.font.nunito, FontWeight.Medium),
+    Font(R.font.nunito, FontWeight.SemiBold),
+    Font(R.font.nunito, FontWeight.Bold),
+    Font(R.font.nunito, FontWeight.ExtraBold)
+)
+
+val PlusJakartaFontFamily = FontFamily(
+    Font(R.font.plus_jakarta_sans, FontWeight.Normal),
+    Font(R.font.plus_jakarta_sans, FontWeight.SemiBold),
+    Font(R.font.plus_jakarta_sans, FontWeight.Bold),
+    Font(R.font.plus_jakarta_sans, FontWeight.ExtraBold)
+)
+
+val JetBrainsMonoFontFamily = FontFamily(
+    Font(R.font.jetbrains_mono, FontWeight.Normal),
+    Font(R.font.jetbrains_mono, FontWeight.Bold)
+)
+
+val TracmioTypography = Typography(
+    displaySmall = TextStyle(
+        fontFamily = PlusJakartaFontFamily,
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = 36.sp,
+        lineHeight = 42.sp,
+        letterSpacing = (-0.5).sp,
+        fontFeatureSettings = "tnum"
+    ),
+    headlineSmall = TextStyle(
+        fontFamily = PlusJakartaFontFamily,
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = 24.sp,
+        lineHeight = 30.sp,
+        letterSpacing = (-0.3).sp
+    ),
+    titleLarge = TextStyle(
+        fontFamily = PlusJakartaFontFamily,
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = 20.sp,
+        lineHeight = 26.sp,
+        fontFeatureSettings = "tnum"
+    ),
+    titleMedium = TextStyle(
+        fontFamily = PlusJakartaFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 16.sp,
+        lineHeight = 22.sp,
+        fontFeatureSettings = "tnum"
+    ),
+    titleSmall = TextStyle(
+        fontFamily = NunitoFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 14.sp,
+        lineHeight = 20.sp
+    ),
+    bodyLarge = TextStyle(
+        fontFamily = NunitoFontFamily,
+        fontWeight = FontWeight.Normal,
+        fontSize = 15.sp,
+        lineHeight = 22.sp
+    ),
+    bodyMedium = TextStyle(
+        fontFamily = NunitoFontFamily,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 14.sp,
+        lineHeight = 20.sp
+    ),
+    bodySmall = TextStyle(
+        fontFamily = NunitoFontFamily,
+        fontWeight = FontWeight.Normal,
+        fontSize = 12.sp,
+        lineHeight = 16.sp
+    ),
+    labelLarge = TextStyle(
+        fontFamily = NunitoFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 14.sp,
+        lineHeight = 18.sp,
+        fontFeatureSettings = "tnum"
+    ),
+    labelMedium = TextStyle(
+        fontFamily = NunitoFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 12.sp,
+        lineHeight = 16.sp
+    ),
+    labelSmall = TextStyle(
+        fontFamily = NunitoFontFamily,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 11.sp,
+        lineHeight = 14.sp
+    )
+)
 
 data class LiquidGlassSettings(
     val themePreset: String = "dark",
@@ -295,16 +403,29 @@ object ThemePresets {
     )
 
     val GLASS_UI_STYLES: List<Pair<String, String>> = listOf(
-        "ui1" to "Liquid Cyan (Default)",
-        "ui2" to "Frosted Crystal",
-        "ui3" to "Neon Edge",
-        "ui4" to "Soft Satin",
-        "ui5" to "Deep Obsidian",
-        "ui6" to "Aqua Prism",
-        "ui7" to "Minimal Clear",
-        "ui8" to "Double Specular",
-        "ui9" to "Capsule Pill",
-        "ui10" to "High Contrast Pro"
+        "ui1" to "Classic Liquid Glass",
+        "ui2" to "Frosted Diamond",
+        "ui3" to "Neon Cyber Edge",
+        "ui4" to "3D Floating Prism",
+        "ui5" to "Velvet Matte Smoke",
+        "ui6" to "Liquid Mercury Chrome",
+        "ui7" to "Emerald Bio-Glass",
+        "ui8" to "Royal Gold Luxe",
+        "ui9" to "Tactical HUD Grid",
+        "ui10" to "Ultra-Round Bubble"
+    )
+
+    val ANIMATION_STYLES: List<Pair<Int, String>> = listOf(
+        1 to "Silk Liquid Glide",
+        2 to "Spring Elastic Pop",
+        3 to "Hyper-Snap Instant",
+        4 to "3D Depth Flip",
+        5 to "Vortex Zoom Rise",
+        6 to "Crystal Blur Resolve",
+        7 to "Kinetic Lift Up",
+        8 to "Liquid Ripple Morph",
+        9 to "Glass Refraction Slide",
+        10 to "Aurora Horizon Glide"
     )
 
     private fun parseHexColorOrDefault(hex: String, fallback: Color): Color {
@@ -384,8 +505,51 @@ fun TracmioNativeTheme(
     CompositionLocalProvider(LocalDensity provides scaledDensity) {
         MaterialTheme(
             colorScheme = colorScheme,
+            typography = TracmioTypography,
             content = content
         )
+    }
+}
+
+fun tracmioTransitionSpec(animationStyle: Int): ContentTransform {
+    val silkEase = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+    val elasticEase = CubicBezierEasing(0.34f, 1.56f, 0.64f, 1f)
+    val kineticEase = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+    return when (animationStyle) {
+        2 -> (fadeIn(tween(340, easing = elasticEase)) +
+            scaleIn(initialScale = 0.92f, animationSpec = tween(400, easing = elasticEase)) +
+            slideInVertically(animationSpec = tween(380, easing = elasticEase)) { it / 16 }) togetherWith
+            fadeOut(tween(180))
+        3 -> (fadeIn(tween(140, easing = LinearEasing)) +
+            slideInVertically(animationSpec = tween(140, easing = LinearEasing)) { it / 48 }) togetherWith
+            fadeOut(tween(110))
+        4 -> (fadeIn(tween(340, easing = silkEase)) +
+            scaleIn(initialScale = 0.95f, animationSpec = tween(360, easing = silkEase)) +
+            slideInHorizontally(animationSpec = tween(360, easing = silkEase)) { -it / 16 }) togetherWith
+            (fadeOut(tween(220)) + scaleOut(targetScale = 0.96f, animationSpec = tween(220)))
+        5 -> (fadeIn(tween(380, easing = silkEase)) +
+            scaleIn(initialScale = 0.90f, animationSpec = tween(380, easing = silkEase))) togetherWith
+            (fadeOut(tween(200)) + scaleOut(targetScale = 1.04f, animationSpec = tween(200)))
+        6 -> (fadeIn(tween(360, easing = FastOutSlowInEasing)) +
+            scaleIn(initialScale = 0.97f, animationSpec = tween(360, easing = FastOutSlowInEasing))) togetherWith
+            fadeOut(tween(220))
+        7 -> (fadeIn(tween(300, easing = kineticEase)) +
+            slideInVertically(animationSpec = tween(320, easing = kineticEase)) { it / 10 }) togetherWith
+            (fadeOut(tween(200)) + slideOutVertically(animationSpec = tween(200)) { -it / 24 })
+        8 -> (fadeIn(tween(380, easing = elasticEase)) +
+            scaleIn(initialScale = 0.94f, animationSpec = tween(400, easing = elasticEase))) togetherWith
+            fadeOut(tween(220))
+        9 -> (fadeIn(tween(300, easing = FastOutSlowInEasing)) +
+            slideInHorizontally(animationSpec = tween(300, easing = FastOutSlowInEasing)) { it / 10 }) togetherWith
+            (fadeOut(tween(220)) + slideOutHorizontally(animationSpec = tween(220)) { -it / 14 })
+        10 -> (fadeIn(tween(380, easing = silkEase)) +
+            slideInVertically(animationSpec = tween(380, easing = silkEase)) { -it / 18 } +
+            scaleIn(initialScale = 0.98f, animationSpec = tween(380, easing = silkEase))) togetherWith
+            fadeOut(tween(220))
+        else -> (fadeIn(tween(320, easing = silkEase)) +
+            slideInVertically(animationSpec = tween(340, easing = silkEase)) { it / 20 } +
+            scaleIn(initialScale = 0.985f, animationSpec = tween(340, easing = silkEase))) togetherWith
+            fadeOut(tween(200))
     }
 }
 
@@ -403,23 +567,25 @@ fun GlassCard(
     val palette = ThemePresets.getPalette(settings.themePreset, settings.customPrimaryHex, settings.customSecondaryHex)
     val styleId = settings.glassUiStyle
     val resolvedShape: Shape = shape ?: when (styleId) {
-        "ui6" -> RoundedCornerShape(26.dp)
-        "ui7" -> RoundedCornerShape(16.dp)
-        "ui9" -> RoundedCornerShape(30.dp)
+        "ui6" -> RoundedCornerShape(24.dp)
+        "ui7" -> RoundedCornerShape(18.dp)
+        "ui9" -> RoundedCornerShape(14.dp)
+        "ui10" -> RoundedCornerShape(28.dp)
         else -> RoundedCornerShape(22.dp)
     }
     val resolvedBorderWidth: Dp = borderWidth ?: when (styleId) {
         "ui3" -> 2.0.dp
         "ui7" -> 1.0.dp
         "ui8" -> 1.8.dp
-        "ui10" -> 2.2.dp
+        "ui9" -> 1.2.dp
+        "ui10" -> 2.1.dp
         else -> 1.4.dp
     }
     val alphaFactor = when (styleId) {
-        "ui2" -> 0.72f
-        "ui4" -> 0.96f
-        "ui5" -> 0.94f
-        "ui7" -> 0.65f
+        "ui2" -> 0.86f
+        "ui4" -> 0.95f
+        "ui5" -> 0.96f
+        "ui7" -> 0.68f
         "ui10" -> 0.98f
         else -> 0.88f
     }
@@ -428,6 +594,10 @@ fun GlassCard(
         Brush.verticalGradient(listOf(backgroundColor, backgroundColor.copy(alpha = (backgroundColor.alpha * 0.92f))))
     } else if (palette.isLight) {
         Brush.verticalGradient(listOf(palette.surfaceElevated, palette.surface))
+    } else if (styleId == "ui5") {
+        Brush.verticalGradient(listOf(Color(0xF00B131C), Color(0xF2050A10)))
+    } else if (styleId == "ui6") {
+        Brush.linearGradient(listOf(Color(0xD41B3544), Color(0xD00B1C28), Color(0xD4172D3D)))
     } else if (palette.id == "dark" && styleId == "ui1") {
         Brush.verticalGradient(listOf(Color(0xC70F3A4E), Color(0xB8092B3C)))
     } else {
@@ -444,26 +614,51 @@ fun GlassCard(
     } else {
         when (styleId) {
             "ui3" -> Brush.linearGradient(listOf(palette.primary, palette.secondary, palette.primary.copy(alpha = 0.65f)))
-            "ui8" -> Brush.verticalGradient(listOf(Color(0x88FFFFFF), palette.primary.copy(alpha = 0.65f), Color(0x44FFFFFF)))
-            "ui10" -> Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.9f), palette.primary))
-            else -> Brush.verticalGradient(listOf(Color(0x38FFFFFF), palette.surfaceBorder))
+            "ui6" -> Brush.verticalGradient(listOf(Color(0xBBFFFFFF), Color(0x5594A3B8), palette.primary.copy(alpha = 0.45f)))
+            "ui7" -> Brush.verticalGradient(listOf(Color(0x5510B981), Color(0x3300F5D4)))
+            "ui8" -> Brush.verticalGradient(listOf(Color(0xAAFDE68A), Color(0x88F59E0B), Color(0x44FDE68A)))
+            "ui10" -> Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.85f), palette.primary))
+            else -> Brush.verticalGradient(listOf(Color(0x3DFFFFFF), palette.surfaceBorder))
         }
+    }
+
+    val shadowModifier = when (styleId) {
+        "ui4" -> Modifier.shadow(14.dp, resolvedShape, ambientColor = palette.primary.copy(alpha = 0.35f), spotColor = palette.secondary.copy(alpha = 0.35f))
+        "ui3" -> Modifier.shadow(10.dp, resolvedShape, ambientColor = palette.primary.copy(alpha = 0.45f), spotColor = palette.primary.copy(alpha = 0.45f))
+        else -> Modifier
     }
 
     Box(
         modifier = modifier
+            .then(shadowModifier)
             .clip(resolvedShape)
             .background(bgBrush)
             .border(width = resolvedBorderWidth, brush = strokeBrush, shape = resolvedShape)
             .then(
                 if (styleId == "ui8") {
-                    Modifier.padding(2.dp).border(0.8.dp, Color.White.copy(alpha = 0.22f), resolvedShape)
+                    Modifier.padding(2.dp).border(0.8.dp, Color(0x66FBBF24), resolvedShape)
                 } else {
                     Modifier
                 }
             )
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
     ) {
+        // Version 2.5 subtle top specular glass rim shine
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            Color.Transparent,
+                            Color.White.copy(alpha = if (palette.isLight) 0.55f else 0.24f),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
         content()
     }
 }
@@ -496,7 +691,7 @@ fun LiquidMeshBackground(
     tiltXProvider: () -> Float,
     tiltYProvider: () -> Float
 ) {
-    val palette = ThemePresets.getPalette(settings.themePreset)
+    val palette = ThemePresets.getPalette(settings.themePreset, settings.customPrimaryHex, settings.customSecondaryHex)
     val infiniteTransition = rememberInfiniteTransition(label = "aurora_mesh")
     val phase by infiniteTransition.animateFloat(
         initialValue = 0f,
@@ -513,6 +708,7 @@ fun LiquidMeshBackground(
             runCatching { BitmapFactory.decodeFile(path)?.asImageBitmap() }.getOrNull()
         }
     }
+    val blurDp = settings.wallpaperBlurDp.coerceIn(0f, 32f)
 
     Box(
         modifier = Modifier
@@ -530,8 +726,22 @@ fun LiquidMeshBackground(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
+                    .then(
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurDp > 0.5f) {
+                            Modifier.blur(blurDp.dp)
+                        } else {
+                            Modifier
+                        }
+                    )
                     .graphicsLayer { alpha = settings.backgroundVisibility.coerceIn(0.05f, 1f) }
             )
+            if (blurDp > 0.5f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(palette.background.copy(alpha = (blurDp / 32f) * 0.34f))
+                )
+            }
         }
 
         // GPU-composited radial aurora orbs (zero per-frame .blur() modifier)

@@ -133,8 +133,11 @@ fun DashboardScreen(
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 1.4.sp
                         )
-                        Text(
-                            text = MoneyPaise.formatCurrency(state.totalBalance, curr, stealth, mask),
+                        AnimatedCurrencyText(
+                            targetValue = state.totalBalance,
+                            currencySymbol = curr,
+                            stealth = stealth,
+                            mask = mask,
                             style = MaterialTheme.typography.displaySmall,
                             fontSize = 36.sp,
                             fontWeight = FontWeight.ExtraBold,
@@ -199,8 +202,11 @@ fun DashboardScreen(
                                         modifier = Modifier.size(19.dp)
                                     )
                                 }
-                                Text(
-                                    text = MoneyPaise.formatCurrency(state.totalIncome, curr, stealth, mask),
+                                AnimatedCurrencyText(
+                                    targetValue = state.totalIncome,
+                                    currencySymbol = curr,
+                                    stealth = stealth,
+                                    mask = mask,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.ExtraBold,
@@ -268,8 +274,11 @@ fun DashboardScreen(
                                         modifier = Modifier.size(19.dp)
                                     )
                                 }
-                                Text(
-                                    text = MoneyPaise.formatCurrency(state.totalExpense, curr, stealth, mask),
+                                AnimatedCurrencyText(
+                                    targetValue = state.totalExpense,
+                                    currencySymbol = curr,
+                                    stealth = stealth,
+                                    mask = mask,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.ExtraBold,
@@ -415,6 +424,10 @@ fun DashboardScreen(
                         label = "Borrowed",
                         valueColor = palette.textPrimary,
                         palette = palette,
+                        animatedAmount = borrowedTotal,
+                        currencySymbol = curr,
+                        stealth = stealth,
+                        mask = mask,
                         modifier = Modifier.weight(1f).fillMaxHeight().testTag("quick_stat_borrowed"),
                         onClick = { onNavigate("people") }
                     )
@@ -424,6 +437,10 @@ fun DashboardScreen(
                         label = "Lent",
                         valueColor = palette.textPrimary,
                         palette = palette,
+                        animatedAmount = lentTotal,
+                        currencySymbol = curr,
+                        stealth = stealth,
+                        mask = mask,
                         modifier = Modifier.weight(1f).fillMaxHeight().testTag("quick_stat_lent"),
                         onClick = { onNavigate("people") }
                     )
@@ -438,6 +455,10 @@ fun DashboardScreen(
                         label = "Net Worth",
                         valueColor = if (netWorth >= 0.0) palette.primary else Color(0xFFFB7185),
                         palette = palette,
+                        animatedAmount = netWorth,
+                        currencySymbol = curr,
+                        stealth = stealth,
+                        mask = mask,
                         modifier = Modifier.weight(1f).fillMaxHeight().testTag("quick_stat_net_worth"),
                         onClick = { onNavigate("financial_xray") }
                     )
@@ -450,6 +471,105 @@ fun DashboardScreen(
                         modifier = Modifier.weight(1f).fillMaxHeight().testTag("quick_stat_transactions"),
                         onClick = { onNavigate("transactions") }
                     )
+                }
+            }
+        }
+
+        // 3b. Horizontal Accounts & Wallets Strip (Version 2.5 .hscroll parity)
+        item {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.testTag("dashboard_accounts_strip")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "ACCOUNTS & WALLETS",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = palette.textPrimary,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.2.sp
+                    )
+                    Text(
+                        text = "Manage →",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.primary,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.clickable { onNavigate("accounts") }
+                    )
+                }
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(state.accounts, key = { it.id }) { acc ->
+                        val accBal = remember(acc, state.transactions) {
+                            FinancialCalculator.balance(acc, state.transactions)
+                        }
+                        val emoji = when {
+                            acc.accountType.equals("Cash", true) -> "💵"
+                            acc.accountType.equals("Credit Card", true) -> "💳"
+                            acc.accountType.equals("Wallet", true) -> "👛"
+                            else -> "🏦"
+                        }
+                        GlassCard(
+                            settings = settings,
+                            shape = RoundedCornerShape(20.dp),
+                            onClick = { onNavigate("accounts") },
+                            modifier = Modifier.width(156.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(emoji, fontSize = 14.sp)
+                                    Text(
+                                        text = acc.accountType.uppercase(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = palette.primary,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1
+                                    )
+                                }
+                                Text(
+                                    text = acc.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.textPrimary,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = MoneyPaise.formatCurrency(accBal, curr, stealth, mask),
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (accBal >= 0) palette.textPrimary else Color(0xFFFB7185),
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                    item {
+                        GlassCard(
+                            settings = settings,
+                            shape = RoundedCornerShape(20.dp),
+                            borderColor = palette.primary.copy(alpha = 0.55f),
+                            onClick = { onNavigate("accounts") },
+                            modifier = Modifier.width(110.dp).height(94.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxSize().padding(10.dp),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text("+", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = palette.primary)
+                                Text("Accounts", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                 }
             }
         }
