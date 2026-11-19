@@ -10,6 +10,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -335,42 +336,44 @@ fun TransactionsListScreen(
                         )
                     }
                 }
-                items(dayTxns, key = { it.id }) { tx ->
+                itemsIndexed(dayTxns, key = { _, tx -> tx.id }) { rowIndex, tx ->
                     val isIncome = tx.type.equals("INCOME", true) || tx.type.equals("BORROW", true) || tx.type.equals("TRANSFER_IN", true)
                     val dateFormatted = remember(tx.timestamp) {
                         SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(tx.timestamp))
                     }
-                    GlassCard(
-                        settings = settings,
-                        onClick = { onOpenReceipt(tx) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(14.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    StaggeredRowEntrance(index = rowIndex) {
+                        GlassCard(
+                            settings = settings,
+                            onClick = { onOpenReceipt(tx) },
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(tx.category, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
-                                    if (tx.subcategory.isNotBlank()) {
-                                        Text("· ${tx.subcategory}", style = MaterialTheme.typography.labelSmall, color = palette.primary)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(tx.category, fontWeight = FontWeight.ExtraBold, color = palette.textPrimary)
+                                        if (tx.subcategory.isNotBlank()) {
+                                            Text("· ${tx.subcategory}", style = MaterialTheme.typography.labelSmall, color = palette.primary)
+                                        }
+                                        if (!tx.attachmentUri.isNullOrBlank()) {
+                                            Text("📎", style = MaterialTheme.typography.labelSmall)
+                                        }
                                     }
-                                    if (!tx.attachmentUri.isNullOrBlank()) {
-                                        Text("📎", style = MaterialTheme.typography.labelSmall)
+                                    Text("$dateFormatted · ${tx.paymentMethod}", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                                    if (tx.note.isNotBlank()) {
+                                        Text(tx.note, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
                                     }
                                 }
-                                Text("$dateFormatted · ${tx.paymentMethod}", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
-                                if (tx.note.isNotBlank()) {
-                                    Text(tx.note, style = MaterialTheme.typography.bodySmall, color = palette.textPrimary)
-                                }
+                                Text(
+                                    (if (isIncome) "+" else "-") + MoneyPaise.formatCurrency(tx.amount, curr, stealth, mask),
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isIncome) palette.primary else Color(0xFFFB7185)
+                                )
                             }
-                            Text(
-                                (if (isIncome) "+" else "-") + MoneyPaise.formatCurrency(tx.amount, curr, stealth, mask),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = if (isIncome) palette.primary else Color(0xFFFB7185)
-                            )
                         }
                     }
                 }

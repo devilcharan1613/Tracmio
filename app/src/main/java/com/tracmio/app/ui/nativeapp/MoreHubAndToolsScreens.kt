@@ -9,6 +9,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesomeMosaic
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -131,7 +138,12 @@ fun MoreScreen(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            GlassBadge3D(emoji = "🗂️", accent = palette.primary, sizeDp = 48.dp)
+                            GlassBadge3D(
+                                icon = Icons.Default.AutoAwesomeMosaic,
+                                accent = palette.primary,
+                                sizeDp = 48.dp,
+                                contentDescription = "Tools Hub"
+                            )
                             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(
                                     "Tools Hub",
@@ -182,7 +194,18 @@ fun MoreScreen(
                             modifier = Modifier.fillMaxSize().padding(14.dp),
                             verticalArrangement = Arrangement.SpaceBetween
                         ) {
-                            GlassBadge3D(emoji = card.emoji, accent = card.accent, sizeDp = 40.dp)
+                            val cardIcon = when (card.id) {
+                                "budgets" -> Icons.Default.PieChart
+                                "people" -> Icons.Default.Groups
+                                "cash_counter" -> Icons.Default.Payments
+                                else -> Icons.Default.MenuBook
+                            }
+                            GlassBadge3D(
+                                icon = cardIcon,
+                                accent = card.accent,
+                                sizeDp = 42.dp,
+                                contentDescription = card.title
+                            )
                             Spacer(Modifier.height(10.dp))
                             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(
@@ -231,7 +254,12 @@ fun MoreScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        GlassBadge3D(emoji = "⚙️", accent = palette.secondary, sizeDp = 46.dp)
+                        GlassBadge3D(
+                            icon = Icons.Default.Settings,
+                            accent = palette.secondary,
+                            sizeDp = 46.dp,
+                            contentDescription = "Settings"
+                        )
                         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(
                                 "Settings",

@@ -12,8 +12,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -506,17 +510,23 @@ fun DashboardScreen(
                         val accBal = remember(acc, state.transactions) {
                             FinancialCalculator.balance(acc, state.transactions)
                         }
-                        val emoji = when {
-                            acc.accountType.equals("Cash", true) -> "💵"
-                            acc.accountType.equals("Credit Card", true) -> "💳"
-                            acc.accountType.equals("Wallet", true) -> "👛"
-                            else -> "🏦"
+                        val accIcon = when {
+                            acc.accountType.equals("Cash", true) -> Icons.Default.Payments
+                            acc.accountType.equals("Credit Card", true) -> Icons.Default.CreditCard
+                            acc.accountType.equals("Wallet", true) -> Icons.Default.AccountBalanceWallet
+                            else -> Icons.Default.AccountBalance
+                        }
+                        val accAccent = when {
+                            acc.accountType.equals("Cash", true) -> Color(0xFF34D399)
+                            acc.accountType.equals("Credit Card", true) -> Color(0xFFFB7185)
+                            acc.accountType.equals("Wallet", true) -> Color(0xFFA855F7)
+                            else -> palette.primary
                         }
                         GlassCard(
                             settings = settings,
                             shape = RoundedCornerShape(20.dp),
                             onClick = { onNavigate("accounts") },
-                            modifier = Modifier.width(156.dp)
+                            modifier = Modifier.width(160.dp)
                         ) {
                             Column(
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -524,9 +534,14 @@ fun DashboardScreen(
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Text(emoji, fontSize = 14.sp)
+                                    GlassBadge3D(
+                                        icon = accIcon,
+                                        accent = accAccent,
+                                        sizeDp = 28.dp,
+                                        contentDescription = acc.accountType
+                                    )
                                     Text(
                                         text = acc.accountType.uppercase(),
                                         style = MaterialTheme.typography.labelSmall,
@@ -851,29 +866,32 @@ fun DashboardScreen(
                 if (recentTxns.isEmpty()) {
                     Text("No transactions yet. Tap + Add or a 1-Tap Chip above.", style = MaterialTheme.typography.bodySmall, color = palette.textSecondary)
                 } else {
-                    recentTxns.forEach { tx ->
+                    recentTxns.forEachIndexed { idx, tx ->
                         val isInc = tx.type.equals("INCOME", true) || tx.type.equals("TRANSFER_IN", true) || tx.type.equals("BORROW", true)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(palette.surfaceElevated.copy(alpha = 0.55f))
-                                .clickable { onOpenTransactionReceipt(tx) }
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(tx.category, fontWeight = FontWeight.Bold, color = palette.textPrimary, style = MaterialTheme.typography.bodyMedium)
-                                if (tx.note.isNotBlank()) {
-                                    Text(tx.note, style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, maxLines = 1)
+                        StaggeredRowEntrance(index = idx) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(palette.surfaceElevated.copy(alpha = 0.55f))
+                                    .clickable { onOpenTransactionReceipt(tx) }
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(tx.category, fontWeight = FontWeight.Bold, color = palette.textPrimary, style = MaterialTheme.typography.bodyMedium)
+                                    if (tx.note.isNotBlank()) {
+                                        Text(tx.note, style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, maxLines = 1)
+                                    }
                                 }
+                                Text(
+                                    (if (isInc) "+" else "-") + MoneyPaise.formatCurrency(tx.amount, curr, stealth, mask),
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isInc) Color(0xFF34D399) else Color(0xFFFB7185)
+                                )
                             }
-                            Text(
-                                (if (isInc) "+" else "-") + MoneyPaise.formatCurrency(tx.amount, curr, stealth, mask),
-                                fontWeight = FontWeight.ExtraBold,
-                                color = if (isInc) Color(0xFF34D399) else Color(0xFFFB7185)
-                            )
                         }
                     }
                 }

@@ -6,9 +6,12 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,11 +19,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -628,8 +633,20 @@ fun GlassCard(
         else -> Modifier
     }
 
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (onClick != null && isPressed) 0.96f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+        label = "glass_card_press_scale"
+    )
+
     Box(
         modifier = modifier
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
             .then(shadowModifier)
             .clip(resolvedShape)
             .background(bgBrush)
@@ -641,7 +658,17 @@ fun GlassCard(
                     Modifier
                 }
             )
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(
+                        interactionSource = interactionSource,
+                        indication = LocalIndication.current,
+                        onClick = onClick
+                    )
+                } else {
+                    Modifier
+                }
+            )
     ) {
         // Version 2.5 subtle top specular glass rim shine
         Box(
@@ -669,19 +696,87 @@ fun GlassBadge3D(
     accent: Color,
     sizeDp: Dp
 ) {
+    val shape = RoundedCornerShape(13.dp)
     Box(
         modifier = Modifier
             .size(sizeDp)
-            .clip(RoundedCornerShape(13.dp))
+            .clip(shape)
             .background(
-                Brush.radialGradient(
-                    colors = listOf(accent.copy(alpha = 0.34f), accent.copy(alpha = 0.12f))
+                Brush.linearGradient(
+                    colors = listOf(
+                        accent.copy(alpha = 0.42f),
+                        accent.copy(alpha = 0.16f),
+                        accent.copy(alpha = 0.28f)
+                    )
                 )
             )
-            .border(1.2.dp, accent.copy(alpha = 0.55f), RoundedCornerShape(13.dp)),
+            .border(
+                1.2.dp,
+                Brush.linearGradient(listOf(Color.White.copy(alpha = 0.55f), accent.copy(alpha = 0.65f))),
+                shape
+            ),
         contentAlignment = Alignment.Center
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(sizeDp * 0.42f)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.White.copy(alpha = 0.26f), Color.Transparent)
+                    )
+                )
+        )
         androidx.compose.material3.Text(text = emoji)
+    }
+}
+
+@Composable
+fun GlassBadge3D(
+    icon: ImageVector,
+    accent: Color,
+    sizeDp: Dp,
+    contentDescription: String? = null
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Box(
+        modifier = Modifier
+            .size(sizeDp)
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        accent.copy(alpha = 0.44f),
+                        accent.copy(alpha = 0.15f),
+                        accent.copy(alpha = 0.30f)
+                    )
+                )
+            )
+            .border(
+                1.3.dp,
+                Brush.linearGradient(listOf(Color.White.copy(alpha = 0.62f), accent.copy(alpha = 0.72f))),
+                shape
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(sizeDp * 0.44f)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.White.copy(alpha = 0.30f), Color.Transparent)
+                    )
+                )
+        )
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = Color.White,
+            modifier = Modifier.size(sizeDp * 0.52f)
+        )
     }
 }
 
